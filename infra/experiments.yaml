@@ -1,33 +1,33 @@
 # 24 GPU 跑法：depth=8 + depth=32 各 12 個
 all:
   # ant depth=8
-  - {env: ant, depth: 8, gpus: 1, cpus: 2, mem: 50G, epochs: 100, steps: 100000000}
-  - {env: ant_big_maze, depth: 8, gpus: 1, cpus: 2, mem: 50G, epochs: 100, steps: 100000000}
-  - {env: ant_u_maze, depth: 8, gpus: 1, cpus: 2, mem: 50G, epochs: 100, steps: 100000000}
-  - {env: ant_hardest_maze, depth: 8, gpus: 1, cpus: 2, mem: 50G, epochs: 200, steps: 200000000}
+  - {env: ant, depth: 8, gpus: 1, cpus: 1, mem: 50G, epochs: 100, steps: 100000000}
+  - {env: ant_big_maze, depth: 8, gpus: 1, cpus: 1, mem: 50G, epochs: 100, steps: 100000000}
+  - {env: ant_u_maze, depth: 8, gpus: 1, cpus: 1, mem: 50G, epochs: 100, steps: 100000000}
+  - {env: ant_hardest_maze, depth: 8, gpus: 1, cpus: 1, mem: 50G, epochs: 200, steps: 200000000}
 
   # arm depth=8
-  - {env: arm_push_easy, depth: 8, gpus: 1, cpus: 2, mem: 50G, epochs: 100, steps: 100000000}
-  - {env: arm_push_hard, depth: 8, gpus: 1, cpus: 2, mem: 50G, epochs: 100, steps: 100000000}
-  - {env: arm_binpick_easy, depth: 8, gpus: 1, cpus: 2, mem: 50G, epochs: 100, steps: 100000000}
-  - {env: arm_binpick_hard, depth: 8, gpus: 1, cpus: 2, mem: 50G, epochs: 100, steps: 100000000}
-  - {env: arm_reach, depth: 8, gpus: 1, cpus: 2, mem: 50G, epochs: 100, steps: 100000000}
-  - {env: arm_grasp, depth: 8, gpus: 1, cpus: 2, mem: 50G, epochs: 100, steps: 100000000}
-  - {env: ant_ball, depth: 8, gpus: 1, cpus: 2, mem: 50G, epochs: 100, steps: 100000000}
-  - {env: ant_push, depth: 8, gpus: 1, cpus: 2, mem: 50G, epochs: 100, steps: 100000000}
+  - {env: arm_push_easy, depth: 8, gpus: 1, cpus: 1, mem: 50G, epochs: 100, steps: 100000000}
+  - {env: arm_push_hard, depth: 8, gpus: 1, cpus: 1, mem: 50G, epochs: 100, steps: 100000000}
+  - {env: arm_binpick_easy, depth: 8, gpus: 1, cpus: 1, mem: 50G, epochs: 100, steps: 100000000}
+  - {env: arm_binpick_hard, depth: 8, gpus: 1, cpus: 1, mem: 50G, epochs: 100, steps: 100000000}
+  - {env: arm_reach, depth: 8, gpus: 1, cpus: 1, mem: 50G, epochs: 100, steps: 100000000}
+  - {env: arm_grasp, depth: 8, gpus: 1, cpus: 1, mem: 50G, epochs: 100, steps: 100000000}
+  - {env: ant_ball, depth: 8, gpus: 1, cpus: 1, mem: 50G, epochs: 100, steps: 100000000}
+  - {env: ant_push, depth: 8, gpus: 1, cpus: 1, mem: 50G, epochs: 100, steps: 100000000}
 
   # ant depth=32
-  - {env: ant, depth: 32, gpus: 1, cpus: 2, mem: 50G, epochs: 100, steps: 100000000}
-  - {env: ant_big_maze, depth: 32, gpus: 1, cpus: 2, mem: 50G, epochs: 100, steps: 100000000}
-  - {env: ant_u_maze, depth: 32, gpus: 1, cpus: 2, mem: 50G, epochs: 100, steps: 100000000}
-  - {env: ant_hardest_maze, depth: 32, gpus: 1, cpus: 2, mem: 50G, epochs: 200, steps: 200000000}
+  - {env: ant, depth: 32, gpus: 1, cpus: 1, mem: 50G, epochs: 100, steps: 100000000}
+  - {env: ant_big_maze, depth: 32, gpus: 1, cpus: 1, mem: 50G, epochs: 100, steps: 100000000}
+  - {env: ant_u_maze, depth: 32, gpus: 1, cpus: 1, mem: 50G, epochs: 100, steps: 100000000}
+  - {env: ant_hardest_maze, depth: 32, gpus: 1, cpus: 1, mem: 50G, epochs: 200, steps: 200000000}
 
   # arm depth=32
-  - {env: arm_push_easy, depth: 32, gpus: 1, cpus: 2, mem: 50G, epochs: 100, steps: 100000000}
-  - {env: arm_push_hard, depth: 32, gpus: 1, cpus: 2, mem: 50G, epochs: 100, steps: 100000000}
-  - {env: arm_binpick_easy, depth: 32, gpus: 1, cpus: 2, mem: 50G, epochs: 100, steps: 100000000}
-  - {env: arm_binpick_hard, depth: 32, gpus: 1, cpus: 2, mem: 50G, epochs: 100, steps: 100000000}
-  - {env: arm_reach, depth: 32, gpus: 1, cpus: 2, mem: 50G, epochs: 100, steps: 100000000}
-  - {env: arm_grasp, depth: 32, gpus: 1, cpus: 2, mem: 50G, epochs: 100, steps: 100000000}
-  - {env: ant_ball, depth: 32, gpus: 1, cpus: 2, mem: 50G, epochs: 100, steps: 100000000}
-  - {env: ant_push, depth: 32, gpus: 1, cpus: 2, mem: 50G, epochs: 100, steps: 100000000}
+  - {env: arm_push_easy, depth: 32, gpus: 1, cpus: 1, mem: 50G, epochs: 100, steps: 100000000}
+  - {env: arm_push_hard, depth: 32, gpus: 1, cpus: 1, mem: 50G, epochs: 100, steps: 100000000}
+  - {env: arm_binpick_easy, depth: 32, gpus: 1, cpus: 1, mem: 50G, epochs: 100, steps: 100000000}
+  - {env: arm_binpick_hard, depth: 32, gpus: 1, cpus: 1, mem: 50G, epochs: 100, steps: 100000000}
+  - {env: arm_reach, depth: 32, gpus: 1, cpus: 1, mem: 50G, epochs: 100, steps: 100000000}
+  - {env: arm_grasp, depth: 32, gpus: 1, cpus: 1, mem: 50G, epochs: 100, steps: 100000000}
+  - {env: ant_ball, depth: 32, gpus: 1, cpus: 1, mem: 50G, epochs: 100, steps: 100000000}
+  - {env: ant_push, depth: 32, gpus: 1, cpus: 1, mem: 50G, epochs: 100, steps: 100000000}

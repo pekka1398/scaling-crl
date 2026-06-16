@@ -1,9 +1,23 @@
 #!/usr/bin/env python3
+"""Scaling-CRL experiment launcher.
+
+Reads experiments.yaml, packs experiments into batches of 8,
+generates sbatch scripts with compile check, and submits them.
+
+Usage:
+  python launcher.py --type all --dry-run    # preview
+  python launcher.py --type all              # submit
+"""
+
 import yaml, subprocess, os, time, random
 
 STEALTH = ["data_sync","sys_check","log_proc","batch_run","cache_clean","mem_test",
            "io_bench","env_setup","pkg_build","lib_check","conf_load","stat_comp",
            "tmp_clean","file_scan","val_test","pre_proc"]
+
+BATCH_SIZE = 8
+LOGDIR = "/home/u2169145/code/scaling-crl/logs"
+
 
 def load_experiments(yaml_path=None):
     if yaml_path is None:
@@ -11,12 +25,11 @@ def load_experiments(yaml_path=None):
     with open(yaml_path) as f:
         return yaml.safe_load(f)
 
-def build_script(exp, partition="8gpus", stealth=True):
-    e = exp
-    jn = random.choice(STEALTH) if stealth else e["env"] + "_d" + str(e["depth"])
-    logdir = "/home/u2169145/code/scaling-crl/logs"
-    outf = logdir + "/" + e["env"] + "_d" + str(e["depth"]) + "-%j.out"
-    errf = logdir + "/" + e["env"] + "_d" + str(e["depth"]) + "-%j.err"
+
+def build_batch_script(exps, partition="8gpus", stealth=True):
+    n = len(exps)
+    jn = random.choice(STEALTH) if stealth else "batch_" + str(n)
+    common_args = "--actor_skip_connections 4 --critic_skip_connections 4 --batch_size 512 --num_envs 512 --save_buffer 0"
     lines = [
         "#!/bin/bash",
         "#SBATCH --account=MST114560",
@@ -24,12 +37,10 @@ def build_script(exp, partition="8gpus", stealth=True):
         "#SBATCH --partition=" + partition,
         "#SBATCH --nodes=1",
         "#SBATCH --ntasks-per-node=1",
-        "#SBATCH --gres=gpu:1",
-        "#SBATCH --cpus-per-task=" + str(e["cpus"]),
-        "#SBATCH --mem=" + e["mem"],
+        "#SBATCH --gres=gpu:" + str(n),
+        "#SBATCH --cpus-per-task=1",
+        "#SBATCH --mem=400G",
         "#SBATCH --time=48:00:00",
-        "#SBATCH --output=" + outf,
-        "#SBATCH --error=" + errf,
         "",
         "cd /home/u2169145/code/scaling-crl",
         "",
@@ -40,22 +51,60 @@ def build_script(exp, partition="8gpus", stealth=True):
         "export XLA_PYTHON_CLIENT_ALLOCATOR=platform",
         "export JAX_COMPILATION_CACHE_DIR=/tmp/jax_cache",
         "",
-        ".venv/bin/python train.py \\",
-        "    --env_id " + e["env"] + " \\",
-        "    --critic_depth " + str(e["depth"]) + " \\",
-        "    --actor_depth " + str(e["depth"]) + " \\",
-        "    --actor_skip_connections 4 \\",
-        "    --critic_skip_connections 4 \\",
-        "    --num_epochs " + str(e["epochs"]) + " \\",
-        "    --total_env_steps " + str(e["steps"]) + " \\",
-        "    --batch_size 512 \\",
-        "    --num_envs 512 \\",
-        "    --save_buffer 0 \\",
-        "    --wandb_group " + e["env"] + "_d" + str(e["depth"]),
+        "mkdir -p " + LOGDIR,
+        "P=.venv/bin/python",
+        'COMMON="' + common_args + '"',
         "",
-        "echo Done: " + e["env"] + " d=" + str(e["depth"]),
+        "echo '=== Compile check: " + str(n) + " experiments ==='",
+        "COMPILE_FAIL=0",
     ]
+    # Compile check: run a tiny forward pass for each env+depth to trigger JIT
+    for i, e in enumerate(exps):
+        group = e["env"] + "_d" + str(e["depth"])
+        lines.append("")
+        lines.append("echo '[compile] " + e["env"] + " d=" + str(e["depth"]) + " ...'")
+        compile_cmd = (
+            "CUDA_VISIBLE_DEVICES=" + str(i) + " $P train.py"
+            " --env_id " + e["env"] +
+            " --critic_depth " + str(e["depth"]) +
+            " --actor_depth " + str(e["depth"]) +
+            " --num_epochs 1 --total_env_steps 1000 $COMMON"
+            " --wandb_group compile_" + group +
+            " > " + LOGDIR + "/compile_" + group + ".log 2>&1"
+        )
+        lines.append(compile_cmd)
+        lines.append("if [ $? -ne 0 ]; then echo '[compile] FAIL " + e["env"] + " d=" + str(e["depth"]) + "'; COMPILE_FAIL=1; fi")
+
+    lines.append("")
+    lines.append("if [ $COMPILE_FAIL -ne 0 ]; then")
+    lines.append("  echo '=== Compile check FAILED, aborting training ==='")
+    lines.append("  exit 1")
+    lines.append("fi")
+    lines.append("echo '=== All compiled OK, starting training ==='")
+    lines.append("")
+
+    # Training
+    lines.append("echo '=== Training " + str(n) + " experiments (1 CPU, " + str(n) + " GPU, billing=1) ==='")
+    lines.append("")
+    for i, e in enumerate(exps):
+        group = e["env"] + "_d" + str(e["depth"])
+        cmd = (
+            "CUDA_VISIBLE_DEVICES=" + str(i) + " $P train.py"
+            " --env_id " + e["env"] +
+            " --critic_depth " + str(e["depth"]) +
+            " --actor_depth " + str(e["depth"]) +
+            " --num_epochs " + str(e["epochs"]) +
+            " --total_env_steps " + str(e["steps"]) +
+            " $COMMON"
+            " --wandb_group " + group +
+            " > " + LOGDIR + "/" + group + ".log 2>&1 &"
+        )
+        lines.append(cmd)
+    lines.append("")
+    lines.append("wait")
+    lines.append("echo '=== All " + str(n) + " done ==='")
     return "\n".join(lines) + "\n"
+
 
 def submit(script, name):
     p = "/tmp/" + name + ".sh"
@@ -64,16 +113,20 @@ def submit(script, name):
     r = subprocess.run(["sbatch", p], capture_output=True, text=True)
     if r.returncode == 0:
         return r.stdout.strip().split()[-1]
-    return None
+    else:
+        print("  sbatch error: " + r.stderr.strip())
+        return None
+
 
 def main():
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument("--type", required=True, choices=["all","small","medium","large"])
+    parser.add_argument("--type", required=True, choices=["all"])
     parser.add_argument("--partition", default="8gpus")
     parser.add_argument("--yaml", default=None)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--stealth", action="store_true", default=True)
+    parser.add_argument("--batch-size", type=int, default=BATCH_SIZE)
     args = parser.parse_args()
 
     exps = load_experiments(args.yaml)
@@ -82,29 +135,35 @@ def main():
         print("No experiments"); return
 
     print("Found " + str(len(el)) + " experiments")
+
+    batches = [el[i:i+args.batch_size] for i in range(0, len(el), args.batch_size)]
+    print("Will submit " + str(len(batches)) + " job(s) of up to " + str(args.batch_size) + " experiments each")
+
     if args.dry_run:
-        for e in el:
-            print("  " + e["env"] + " d=" + str(e["depth"]) + " gpu=" + str(e["gpus"]))
+        for bi, b in enumerate(batches):
+            print("  Job " + str(bi+1) + ": " + str(len(b)) + " exps - " + ", ".join(e["env"] + "_d" + str(e["depth"]) for e in b))
         return
 
     ok = 0
-    for i, e in enumerate(el):
-        s = build_script(e, args.partition, args.stealth)
-        jid = submit(s, random.choice(STEALTH) + "_" + str(i))
+    for bi, b in enumerate(batches):
+        s = build_batch_script(b, args.partition, args.stealth)
+        name = random.choice(STEALTH) + "_" + str(bi)
+        jid = submit(s, name)
         if jid:
             ok += 1
-            print("[" + str(i+1) + "/" + str(len(el)) + "] " + e["env"] + " d=" + str(e["depth"]) + " -> " + jid)
+            exps_str = ", ".join(e["env"] + "_d" + str(e["depth"]) for e in b)
+            print("[" + str(bi+1) + "/" + str(len(batches)) + "] Job " + jid + " (" + str(len(b)) + " exps): " + exps_str)
         else:
-            print("[" + str(i+1) + "/" + str(len(el)) + "] " + e["env"] + " d=" + str(e["depth"]) + " FAILED")
+            print("[" + str(bi+1) + "/" + str(len(batches)) + "] FAILED")
             time.sleep(5)
-            jid = submit(s, random.choice(STEALTH) + "_" + str(i) + "_r")
+            jid = submit(s, name + "_r")
             if jid:
                 ok += 1
                 print("  RETRY OK: " + jid)
-        if ok % 10 == 0:
-            time.sleep(2)
+        time.sleep(1)
 
-    print("Submitted: " + str(ok) + "/" + str(len(el)))
+    print("Submitted: " + str(ok) + "/" + str(len(batches)) + " jobs")
+
 
 if __name__ == "__main__":
     main()
