@@ -1,4 +1,5 @@
 import os
+import threading
 import jax
 import jax._src.cache as jax_cache
 jax_cache.set_cache_dir("/tmp/jax_cache")
@@ -260,9 +261,19 @@ def load_params(path: str):
         buf = fin.read()
     return pickle.loads(buf)
 
+def save_params_async(path: str, params: Any):
+    """Saves parameters in background thread (non-blocking)."""
+    def _save():
+        with epath.Path(path).open("wb") as fout:
+            fout.write(pickle.dumps(params))
+    cpu_params = jax.device_get(params)
+    t = threading.Thread(target=_save, args=())
+    t.start()
+    return t
+
 def save_params(path: str, params: Any):
     """Saves parameters in flax format."""
-    with epath.Path(path).open('wb') as fout:
+    with epath.Path(path).open("wb") as fout:
         fout.write(pickle.dumps(params))
 
 if __name__ == "__main__":
@@ -1032,7 +1043,7 @@ if __name__ == "__main__":
                 # Save current policy and critic params.
                 params = (training_state.alpha_state.params, training_state.actor_state.params, training_state.critic_state.params)
                 path = f"{save_path}/step_{int(training_state.env_steps)}.pkl"
-                save_params(path, params)
+                save_params_async(path, params)
         
         if args.track:
             wandb.log(metrics, step=ne)
@@ -1048,7 +1059,7 @@ if __name__ == "__main__":
         # Save current policy and critic params.
         params = (training_state.alpha_state.params, training_state.actor_state.params, training_state.critic_state.params)
         path = f"{save_path}/final.pkl"
-        save_params(path, params)
+        save_params_async(path, params)
         
     # After training is complete, render the final policy
     if args.capture_vis:
