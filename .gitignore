@@ -1,0 +1,8 @@
+.venv/
+runs/
+logs/
+wandb/
+__pycache__/
+*.pyc
+*.pkl
+/tmp/
