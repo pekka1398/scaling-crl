@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Scaling-CRL experiment launcher.
 
-Reads experiments.yaml, packs experiments into batches of 8,
+Reads experiments.yaml, packs experiments into batches,
 generates sbatch scripts with compile check, and submits them.
 
 Usage:
   python launcher.py --type all --dry-run    # preview
-  python launcher.py --type all              # submit
+  python launcher.py --type all              # submit all
+  python launcher.py --type all --limit 1    # submit only first batch
 """
 
 import yaml, subprocess, os, time, random
@@ -127,6 +128,7 @@ def main():
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--stealth", action="store_true", default=True)
     parser.add_argument("--batch-size", type=int, default=BATCH_SIZE)
+    parser.add_argument("--limit", type=int, default=0, help="Max number of jobs to submit (0=all)")
     args = parser.parse_args()
 
     exps = load_experiments(args.yaml)
@@ -137,6 +139,8 @@ def main():
     print("Found " + str(len(el)) + " experiments")
 
     batches = [el[i:i+args.batch_size] for i in range(0, len(el), args.batch_size)]
+    if args.limit > 0:
+        batches = batches[:args.limit]
     print("Will submit " + str(len(batches)) + " job(s) of up to " + str(args.batch_size) + " experiments each")
 
     if args.dry_run:
