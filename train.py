@@ -349,6 +349,8 @@ if __name__ == "__main__":
             name=run_name,
             monitor_gym=True,
             save_code=True,
+            resume="allow",
+            id=run_name,
         )
 
         if args.wandb_mode == 'offline':
