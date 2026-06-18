@@ -266,7 +266,7 @@ def load_legacy_checkpoint(path: str):
 
 def create_checkpoint_manager(save_path: str):
     """Create an Orbax CheckpointManager (atomic writes, auto-cleanup, async)."""
-    ckpt_dir = os.path.join(str(save_path), "checkpoints")
+    ckpt_dir = os.path.abspath(os.path.join(str(save_path), "checkpoints"))
     os.makedirs(ckpt_dir, exist_ok=True)
     checkpointer = ocp.PyTreeCheckpointer()
     options = ocp.CheckpointManagerOptions(max_to_keep=3)
@@ -1156,7 +1156,10 @@ if __name__ == "__main__":
 
     
     if args.checkpoint:
-        save_checkpoint(ckpt_manager, training_state, args.num_epochs - 1)
+        # Save final checkpoint (use force=True to overwrite if step already exists)
+        final_step = int(training_state.env_steps)
+        if final_step not in ckpt_manager.all_steps():
+            save_checkpoint(ckpt_manager, training_state, args.num_epochs - 1)
         ckpt_manager.wait_until_finished()
         
     # After training is complete, render the final policy
