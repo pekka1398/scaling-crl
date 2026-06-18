@@ -40,12 +40,16 @@ def load_actor(exp_name, checkpoint=None):
     if os.path.exists(args_path):
         with open(args_path, 'rb') as f:
             ckpt_args = pickle.load(f)
-        env_id = ckpt_args.env_id
-        depth = ckpt_args.actor_depth
-        seed = ckpt_args.seed
-        actor_skip = ckpt_args.actor_skip_connections
-        actor_width = ckpt_args.actor_network_width
-        use_relu = ckpt_args.use_relu
+        # Support both dict and dataclass formats
+        def _get(key, default=None):
+            if isinstance(ckpt_args, dict):
+                return ckpt_args.get(key, default)
+            return getattr(ckpt_args, key, default)
+        env_id = _get("env_id")
+        depth = _get("actor_depth")
+        seed = _get("seed")
+        actor_width = _get("actor_network_width", 256)
+        use_relu = _get("use_relu", 0)
     else:
         raise RuntimeError("args.pkl required to infer model architecture")
 
@@ -82,7 +86,7 @@ def load_actor(exp_name, checkpoint=None):
     action_size = raw_env.action_size
 
     actor = Actor(action_size=action_size, network_width=actor_width,
-                  network_depth=depth, skip_connections=actor_skip, use_relu=use_relu)
+                  network_depth=depth, use_relu=use_relu)
 
     return actor, actor_params, env_id, seed, raw_env
 

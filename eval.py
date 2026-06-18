@@ -50,26 +50,29 @@ def run_eval(exp_name=None, checkpoint=None, env_id=None, depth=None, seed=None,
         print("ERROR: Must specify --exp_name or --checkpoint")
         return None
 
-    # Load args.pkl if available
+    # Load args.pkl if available (supports both dict and dataclass formats)
     args_path = os.path.join(save_path, "args.pkl")
     if os.path.exists(args_path):
         with open(args_path, 'rb') as f:
             ckpt_args = pickle.load(f)
+        # Support both dict and dataclass formats
+        def _get(key, default=None):
+            if isinstance(ckpt_args, dict):
+                return ckpt_args.get(key, default)
+            return getattr(ckpt_args, key, default)
         if env_id is None:
-            env_id = ckpt_args.env_id
+            env_id = _get("env_id")
         if depth is None:
-            depth = ckpt_args.actor_depth
+            depth = _get("actor_depth")
         if seed is None:
-            seed = ckpt_args.seed
-        actor_skip = ckpt_args.actor_skip_connections
-        actor_width = ckpt_args.actor_network_width
-        use_relu = ckpt_args.use_relu
+            seed = _get("seed")
+        actor_width = _get("actor_network_width", 256)
+        use_relu = _get("use_relu", 0)
         print(f"Loaded args: env_id={env_id}, depth={depth}, seed={seed}")
     else:
         if env_id is None or depth is None:
             print("ERROR: Must specify --env_id and --depth when no args.pkl found")
             return None
-        actor_skip = 4
         actor_width = 256
         use_relu = 0
         print(f"WARNING: No args.pkl, using defaults")
@@ -115,7 +118,7 @@ def run_eval(exp_name=None, checkpoint=None, env_id=None, depth=None, seed=None,
 
     # Create actor
     actor = Actor(action_size=action_size, network_width=actor_width,
-                  network_depth=depth, skip_connections=actor_skip, use_relu=use_relu)
+                  network_depth=depth, use_relu=use_relu)
 
     # Build minimal TrainingState — only actor_state.params is used by eval
     import optax

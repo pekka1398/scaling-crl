@@ -14,10 +14,11 @@ from crl.buffer import TrajectoryUniformSamplingQueue
 from evaluator import CrlEvaluator
 
 
-def make_actor_step(actor, env, mode="stochastic"):
+def make_actor_step(actor, env, mode="stochastic", **kwargs):
     """Create an actor step function. env is captured via closure (not JIT arg).
 
-    mode: "deterministic" or "stochastic"
+    mode: "deterministic", "stochastic", or "multi_sample"
+    For multi_sample, pass obs_dim, goal_start_idx, goal_end_idx, sa_encoder, g_encoder, K in kwargs.
     """
     if mode == "deterministic":
         def actor_step(training_state, env_state, extra_fields):
@@ -43,6 +44,11 @@ def make_actor_step(actor, env, mode="stochastic"):
                 extras={"state_extras": {x: nstate.info[x] for x in extra_fields}},
             )
         return actor_step
+
+    elif mode == "multi_sample":
+        return make_multi_sample_actor_step(
+            actor, kwargs["sa_encoder"], kwargs["g_encoder"], env,
+            kwargs["obs_dim"], kwargs["goal_start_idx"], kwargs["goal_end_idx"], kwargs["K"])
 
     else:
         raise ValueError(f"Unknown actor mode: {mode}")

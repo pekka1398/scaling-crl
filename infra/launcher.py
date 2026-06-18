@@ -2,22 +2,21 @@
 """Scaling-CRL experiment launcher.
 
 Reads experiment YAML, packs experiments into batches,
-generates sbatch scripts with compile check, and submits them.
+generates sbatch scripts, and submits them.
 
-All experiment config comes from config.Experiment — no hardcoded
-flags or fallbacks in the generated sbatch script.
+All experiment config comes from YAML. train.py reads YAML directly.
+launcher only handles: YAML → batch → sbatch → submit.
 
 Usage:
-  python launcher.py --yaml experiments.yaml --dry-run    # preview
-  python launcher.py --yaml experiments.yaml              # submit all
-  python launcher.py --yaml experiments.yaml --limit 1    # submit only first batch
+  python launcher.py --yaml all_experiments.yaml --dry-run
+  python launcher.py --yaml all_experiments.yaml
+  python launcher.py --yaml all_experiments.yaml --limit 1
 """
 
 import yaml, subprocess, os, time, random, sys, glob, shutil
 from datetime import datetime
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-from config import Experiment
 
 STEALTH = ["data_sync","sys_check","log_proc","batch_run","cache_clean","mem_test",
            "io_bench","env_setup","pkg_build","lib_check","conf_load","stat_comp",
@@ -39,18 +38,14 @@ def archive_old_logs():
     os.makedirs(archive, exist_ok=True)
     for f in log_files:
         shutil.move(f, os.path.join(archive, os.path.basename(f)))
-    print("Archived " + str(len(log_files)) + " old logs to logs/old/" + ts)
+    print(f"Archived {len(log_files)} old logs to logs/old/{ts}")
 
 
-def load_experiments(yaml_path=None, grouped=False):
-    """Load YAML and return list of Experiment objects.
+def load_experiments(yaml_path, grouped=False):
+    """Load YAML and return list of experiment dicts.
 
     If grouped=True, returns list of lists (one per <job> section).
-    <job> or <job=N> markers in comments split the file into job groups.
-    Without markers, returns [all_exps] (single group).
     """
-    if yaml_path is None:
-        yaml_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "experiments.yaml")
     with open(yaml_path) as f:
         text = f.read()
 
@@ -65,9 +60,8 @@ def load_experiments(yaml_path=None, grouped=False):
         raw = yaml.safe_load(chunk)
         if raw is None:
             continue
-        exps = [Experiment(**entry) for entry in raw]
-        if exps:
-            groups.append(exps)
+        if isinstance(raw, list):
+            groups.append(raw)
 
     if not groups:
         return [] if grouped else []
@@ -77,9 +71,10 @@ def load_experiments(yaml_path=None, grouped=False):
     return [e for g in groups for e in g]
 
 
-def build_batch_script(exps, partition="8gpus", stealth=True, mem="200G"):
+def build_batch_script(yaml_path, exps, partition="8gpus", stealth=True, mem="200G"):
     n = len(exps)
     jn = random.choice(STEALTH) if stealth else "batch_" + str(n)
+    yaml_abs = os.path.abspath(yaml_path)
     lines = [
         "#!/bin/bash",
         "#SBATCH --account=MST114560",
@@ -96,7 +91,6 @@ def build_batch_script(exps, partition="8gpus", stealth=True, mem="200G"):
         "",
         "cd /home/u2169145/code/scaling-crl",
         "",
-        "# Kill stray processes on exit or signal",
         "trap 'pkill -P $$ -f train.py 2>/dev/null || true' EXIT TERM INT",
         "",
         'NVIDIA_LIBS=$(find .venv -path "*/nvidia/*/lib" -type d | tr "\\n" ":")',
@@ -112,50 +106,57 @@ def build_batch_script(exps, partition="8gpus", stealth=True, mem="200G"):
         "COMPILE_FAIL=0",
     ]
 
-    # Compile check: 1 epoch with 1M steps to trigger JIT compile
+    # Compile check
     for i, e in enumerate(exps):
+        exp_name = e["exp_name"]
         lines.append("")
-        lines.append("echo '[compile] " + e.exp_name + " ...'")
-        args = e.to_train_args(compile_check=True)
+        lines.append(f"echo '[compile] {exp_name} ...'")
         compile_cmd = (
-            "CUDA_VISIBLE_DEVICES=" + str(i) + " $P train.py "
-            + " ".join(args)
-            + " > " + LOGDIR + "/compile_" + e.exp_name + ".log 2>&1"
+            f"CUDA_VISIBLE_DEVICES={i} $P train.py"
+            f" --yaml {yaml_abs}"
+            f" --exp_name {exp_name}"
+            f" --compile_check"
+            f" > {LOGDIR}/compile_{exp_name}.log 2>&1"
         )
         lines.append(compile_cmd)
-        lines.append("if [ $? -ne 0 ]; then echo '[compile] FAIL " + e.exp_name + "'; COMPILE_FAIL=1; fi")
+        lines.append(f"if [ $? -ne 0 ]; then echo '[compile] FAIL {exp_name}'; COMPILE_FAIL=1; fi")
 
-    lines.append("")
-    lines.append("if [ $COMPILE_FAIL -ne 0 ]; then")
-    lines.append("  echo '=== Compile check FAILED, aborting training ==='")
-    lines.append("  exit 1")
-    lines.append("fi")
-    lines.append("echo '=== All compiled OK, starting training ==='")
-    lines.append("")
+    lines += [
+        "",
+        "if [ $COMPILE_FAIL -ne 0 ]; then",
+        "  echo '=== Compile check FAILED, aborting training ==='",
+        "  exit 1",
+        "fi",
+        "echo '=== All compiled OK, starting training ==='",
+        "",
+        f"echo '=== Training {n} experiments (1 CPU, {n} GPU, billing=1) ==='",
+        "PIDS=()",
+        "",
+    ]
 
     # Training
-    lines.append("echo '=== Training " + str(n) + " experiments (1 CPU, " + str(n) + " GPU, billing=1) ==='")
-    lines.append("PIDS=()")
-    lines.append("")
     for i, e in enumerate(exps):
-        args = e.to_train_args(compile_check=False)
+        exp_name = e["exp_name"]
         cmd = (
-            "CUDA_VISIBLE_DEVICES=" + str(i) + " $P train.py "
-            + " ".join(args)
-            + " > " + LOGDIR + "/" + e.exp_name + ".log 2>&1 &"
+            f"CUDA_VISIBLE_DEVICES={i} $P train.py"
+            f" --yaml {yaml_abs}"
+            f" --exp_name {exp_name}"
+            f" > {LOGDIR}/{exp_name}.log 2>&1 &"
         )
         lines.append(cmd)
         lines.append("PIDS+=($!)")
-    lines.append("")
-    lines.append("FAIL=0")
-    lines.append("for pid in \"${PIDS[@]}\"; do")
-    lines.append("  wait $pid || FAIL=1")
-    lines.append("done")
-    lines.append("if [ $FAIL -ne 0 ]; then echo '=== Some experiments FAILED ==='; else echo '=== All " + str(n) + " done ==='; fi")
-    lines.append("")
-    lines.append("# Cleanup: kill any stray python processes before exiting")
-    lines.append("pkill -P $$ -f 'train.py' 2>/dev/null || true")
-    lines.append("exit $FAIL")
+
+    lines += [
+        "",
+        "FAIL=0",
+        'for pid in "${PIDS[@]}"; do',
+        "  wait $pid || FAIL=1",
+        "done",
+        f'if [ $FAIL -ne 0 ]; then echo "=== Some experiments FAILED ==="; else echo "=== All {n} done ==="; fi',
+        "",
+        "pkill -P $$ -f 'train.py' 2>/dev/null || true",
+        "exit $FAIL",
+    ]
     return "\n".join(lines) + "\n"
 
 
@@ -188,7 +189,7 @@ def main():
         print("No experiments"); return
 
     total = sum(len(g) for g in groups)
-    print("Found " + str(total) + " experiments in " + str(len(groups)) + " section(s)")
+    print(f"Found {total} experiments in {len(groups)} section(s)")
 
     if len(groups) > 1:
         batches = groups
@@ -198,48 +199,49 @@ def main():
         current_batch = []
         current_depth = None
         for e in exps:
-            if current_depth is not None and e.depth != current_depth and len(current_batch) > 0:
+            d = e.get("depth", 0)
+            if current_depth is not None and d != current_depth and len(current_batch) > 0:
                 batches.append(current_batch)
                 current_batch = []
             if len(current_batch) >= args.batch_size:
                 batches.append(current_batch)
                 current_batch = []
             current_batch.append(e)
-            current_depth = e.depth
+            current_depth = d
         if current_batch:
             batches.append(current_batch)
 
     if args.limit > 0:
         batches = batches[:args.limit]
-    print("Will submit " + str(len(batches)) + " job(s)")
+    print(f"Will submit {len(batches)} job(s)")
 
     if args.dry_run:
         for bi, b in enumerate(batches):
-            exps_str = ", ".join(e.exp_name + ("[R]" if e.resume_from != "auto" else "") for e in b)
-            print("  Job " + str(bi+1) + ": " + str(len(b)) + " exps - " + exps_str)
+            exps_str = ", ".join(e["exp_name"] for e in b)
+            print(f"  Job {bi+1}: {len(b)} exps - {exps_str}")
         return
 
     archive_old_logs()
 
     ok = 0
     for bi, b in enumerate(batches):
-        s = build_batch_script(b, args.partition, args.stealth, args.mem)
+        s = build_batch_script(args.yaml, b, args.partition, args.stealth, args.mem)
         name = random.choice(STEALTH) + "_" + str(bi)
         jid = submit(s, name)
         if jid:
             ok += 1
-            exps_str = ", ".join(e.exp_name for e in b)
-            print("[" + str(bi+1) + "/" + str(len(batches)) + "] Job " + jid + " (" + str(len(b)) + " exps): " + exps_str)
+            exps_str = ", ".join(e["exp_name"] for e in b)
+            print(f"[{bi+1}/{len(batches)}] Job {jid} ({len(b)} exps): {exps_str}")
         else:
-            print("[" + str(bi+1) + "/" + str(len(batches)) + "] FAILED")
+            print(f"[{bi+1}/{len(batches)}] FAILED")
             time.sleep(5)
             jid = submit(s, name + "_r")
             if jid:
                 ok += 1
-                print("  RETRY OK: " + jid)
+                print(f"  RETRY OK: {jid}")
         time.sleep(1)
 
-    print("Submitted: " + str(ok) + "/" + str(len(batches)) + " jobs")
+    print(f"Submitted: {ok}/{len(batches)} jobs")
 
 
 if __name__ == "__main__":
