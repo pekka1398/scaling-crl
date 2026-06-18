@@ -4,8 +4,8 @@
 Reads experiment YAML, packs experiments into batches,
 generates sbatch scripts with compile check, and submits them.
 
-All naming uses Experiment.exp_name as the single source of truth.
-No ad-hoc string assembly for log/ckpt/wandb names.
+All experiment config comes from config.Experiment — no hardcoded
+flags or fallbacks in the generated sbatch script.
 
 Usage:
   python launcher.py --yaml experiments.yaml --dry-run    # preview
@@ -55,7 +55,6 @@ def load_experiments(yaml_path=None, grouped=False):
         text = f.read()
 
     import re
-    # Split on lines like "# <job>", "# <job 1>", "# <job=3> description"
     parts = re.split(r'^#\s*<job[^>]*>.*$', text, flags=re.MULTILINE | re.IGNORECASE)
 
     groups = []
@@ -75,7 +74,6 @@ def load_experiments(yaml_path=None, grouped=False):
 
     if grouped:
         return groups
-    # Flat mode: concatenate all groups
     return [e for g in groups for e in g]
 
 
@@ -96,12 +94,11 @@ def build_batch_script(exps, partition="8gpus", stealth=True, mem="200G"):
         "",
         "cd /home/u2169145/code/scaling-crl",
         "",
-        "# Kill stray processes on exit or signal (zombie prevention)",
+        "# Kill stray processes on exit or signal",
         "trap 'pkill -P $$ -f train.py 2>/dev/null || true' EXIT TERM INT",
         "",
         'NVIDIA_LIBS=$(find .venv -path "*/nvidia/*/lib" -type d | tr "\\n" ":")',
         "export LD_LIBRARY_PATH=${NVIDIA_LIBS}${LD_LIBRARY_PATH}",
-        "export WANDB_MODE=online",
         "export XLA_PYTHON_CLIENT_PREALLOCATE=false",
         "export XLA_PYTHON_CLIENT_ALLOCATOR=platform",
         "export JAX_COMPILATION_CACHE_DIR=/home/u2169145/.cache/jax",
@@ -112,24 +109,16 @@ def build_batch_script(exps, partition="8gpus", stealth=True, mem="200G"):
         "echo '=== Compile check: " + str(n) + " experiments ==='",
         "COMPILE_FAIL=0",
     ]
+
     # Compile check: 1 epoch with 1M steps to trigger JIT compile
     for i, e in enumerate(exps):
         lines.append("")
         lines.append("echo '[compile] " + e.exp_name + " ...'")
+        args = e.to_train_args(compile_check=True)
         compile_cmd = (
-            "CUDA_VISIBLE_DEVICES=" + str(i) + " $P train.py"
-            " --exp_name compile_" + e.exp_name +
-            " --env_id " + e.env_id +
-            " --critic_depth " + str(e.depth) +
-            " --actor_depth " + str(e.depth) +
-            " --seed " + str(e.seed) +
-            " --num_epochs 1 --total_env_steps 1000000"
-            " --batch_size " + str(e.batch_size) +
-            " --num_envs " + str(e.num_envs) +
-            " --actor_skip_connections " + str(e.actor_skip_connections) +
-            " --critic_skip_connections " + str(e.critic_skip_connections) +
-            " --no-capture-vis --no-checkpoint --no-track"
-            " > " + LOGDIR + "/compile_" + e.exp_name + ".log 2>&1"
+            "CUDA_VISIBLE_DEVICES=" + str(i) + " $P train.py "
+            + " ".join(args)
+            + " > " + LOGDIR + "/compile_" + e.exp_name + ".log 2>&1"
         )
         lines.append(compile_cmd)
         lines.append("if [ $? -ne 0 ]; then echo '[compile] FAIL " + e.exp_name + "'; COMPILE_FAIL=1; fi")
@@ -147,30 +136,12 @@ def build_batch_script(exps, partition="8gpus", stealth=True, mem="200G"):
     lines.append("PIDS=()")
     lines.append("")
     for i, e in enumerate(exps):
+        args = e.to_train_args(compile_check=False)
         cmd = (
-            "CUDA_VISIBLE_DEVICES=" + str(i) + " $P train.py"
-            " --exp_name " + e.exp_name +
-            " --env_id " + e.env_id +
-            " --critic_depth " + str(e.depth) +
-            " --actor_depth " + str(e.depth) +
-            " --seed " + str(e.seed) +
-            " --num_epochs " + str(e.num_epochs) +
-            " --total_env_steps " + str(e.total_env_steps) +
-            " --batch_size " + str(e.batch_size) +
-            " --num_envs " + str(e.num_envs) +
-            " --actor_skip_connections " + str(e.actor_skip_connections) +
-            " --critic_skip_connections " + str(e.critic_skip_connections) +
-            " --no-capture-vis"
-            " --wandb_mode online"
-            " --wandb_group " + e.exp_name
+            "CUDA_VISIBLE_DEVICES=" + str(i) + " $P train.py "
+            + " ".join(args)
+            + " > " + LOGDIR + "/" + e.exp_name + ".log 2>&1 &"
         )
-        if e.resume_from:
-            cmd += " --resume_from " + e.resume_from
-        else:
-            cmd += " --resume_from auto"
-        if e.save_buffer:
-            cmd += " --save_buffer " + str(e.save_buffer)
-        cmd += " > " + LOGDIR + "/" + e.exp_name + ".log 2>&1 &"
         lines.append(cmd)
         lines.append("PIDS+=($!)")
     lines.append("")
@@ -218,10 +189,8 @@ def main():
     print("Found " + str(total) + " experiments in " + str(len(groups)) + " section(s)")
 
     if len(groups) > 1:
-        # <job> markers present — each section is one job
         batches = groups
     else:
-        # No markers — auto-chunk by depth boundary
         exps = groups[0]
         batches = []
         current_batch = []
@@ -244,7 +213,7 @@ def main():
 
     if args.dry_run:
         for bi, b in enumerate(batches):
-            exps_str = ", ".join(e.exp_name + ("[R]" if e.resume_from else "") for e in b)
+            exps_str = ", ".join(e.exp_name + ("[R]" if e.resume_from != "auto" else "") for e in b)
             print("  Job " + str(bi+1) + ": " + str(len(b)) + " exps - " + exps_str)
         return
 
