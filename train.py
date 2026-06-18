@@ -111,6 +111,7 @@ class Args:
     resume_from: str = ""
 
 
+@flax.struct.dataclass
 class TrainingState:
     env_steps: jnp.ndarray
     gradient_steps: jnp.ndarray
@@ -252,10 +253,12 @@ def main():
     replay_buffer.sample_internal = jax.jit(replay_buffer.sample_internal)
     buffer_state = jax.jit(replay_buffer.init)(buffer_key)
 
-    # --- Build training functions ---
-    actor_step_fn = make_actor_step(actor, mode="stochastic")
-    get_experience = make_get_experience(actor_step_fn, replay_buffer, args)
-    update_actor_and_alpha = make_update_actor(actor, sa_encoder, g_encoder, args)
+    # --- Build training functions (env captured via closure) ---
+    actor_step_fn = make_actor_step(actor, env, mode="stochastic")
+    target_entropy = -args.entropy_param * action_size
+    get_experience = make_get_experience(actor_step_fn, replay_buffer, args.unroll_length)
+    prefill = make_prefill(get_experience, env_steps_per_actor_step)
+    update_actor_and_alpha = make_update_actor(actor, sa_encoder, g_encoder, target_entropy, args)
     update_critic = make_update_critic(sa_encoder, g_encoder, args)
     sgd_step = make_sgd_step(update_actor_and_alpha, update_critic)
     training_step = make_training_step(sgd_step, get_experience, replay_buffer, args)
@@ -268,13 +271,11 @@ def main():
     eval_env.step = jax.jit(eval_env.step)
 
     key, prefill_key = jax.random.split(key)
-    for _ in range(num_prefill_actor_steps):
-        env_state, buffer_state = get_experience(training_state, env_state, buffer_state, prefill_key, env)
-        training_state = training_state.replace(env_steps=training_state.env_steps + env_steps_per_actor_step)
-        prefill_key, _ = jax.random.split(prefill_key)
+    training_state, env_state, buffer_state, _ = prefill(
+        training_state, env_state, buffer_state, prefill_key, num_prefill_actor_steps)
 
-    # --- Evaluator ---
-    evaluator = setup_evaluator(actor, sa_encoder, g_encoder, eval_env, args, eval_env_key)
+    # --- Evaluator (env captured via closure) ---
+    evaluator = setup_evaluator(actor, sa_encoder, g_encoder, eval_env, env_info.obs_dim, args, eval_env_key)
 
     # --- Training loop ---
     print('starting training....', flush=True)

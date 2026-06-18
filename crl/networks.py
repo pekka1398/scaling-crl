@@ -1,4 +1,7 @@
-"""CRL network architectures: Actor, SA_encoder, G_encoder, residual_block."""
+"""CRL network architectures: Actor, SA_encoder, G_encoder, residual_block.
+
+Matches original train.py exactly — no added logic.
+"""
 
 import numpy as np
 import flax.linen as nn
@@ -48,10 +51,7 @@ class SA_encoder(nn.Module):
         x = normalize(x)
         x = activation(x)
         for i in range(self.network_depth // 4):
-            if self.skip_connections > 0 and i > 0 and i % self.skip_connections == 0:
-                x = x + residual_block(x, self.network_width, normalize, activation)
-            else:
-                x = residual_block(x, self.network_width, normalize, activation)
+            x = residual_block(x, self.network_width, normalize, activation)
         x = nn.Dense(64, kernel_init=lecun_uniform, bias_init=bias_init)(x)
         return x
 
@@ -77,10 +77,7 @@ class G_encoder(nn.Module):
         x = normalize(x)
         x = activation(x)
         for i in range(self.network_depth // 4):
-            if self.skip_connections > 0 and i > 0 and i % self.skip_connections == 0:
-                x = x + residual_block(x, self.network_width, normalize, activation)
-            else:
-                x = residual_block(x, self.network_width, normalize, activation)
+            x = residual_block(x, self.network_width, normalize, activation)
         x = nn.Dense(64, kernel_init=lecun_uniform, bias_init=bias_init)(x)
         return x
 
@@ -112,10 +109,7 @@ class Actor(nn.Module):
         x = normalize(x)
         x = activation(x)
         for i in range(self.network_depth // 4):
-            if self.skip_connections > 0 and i > 0 and i % self.skip_connections == 0:
-                x = x + residual_block(x, self.network_width, normalize, activation)
-            else:
-                x = residual_block(x, self.network_width, normalize, activation)
+            x = residual_block(x, self.network_width, normalize, activation)
 
         mean = nn.Dense(self.action_size, kernel_init=lecun_uniform, bias_init=bias_init)(x)
         log_std = nn.Dense(self.action_size, kernel_init=lecun_uniform, bias_init=bias_init)(x)

@@ -1,7 +1,7 @@
 """CRL algorithm: training step, critic loss, actor loss.
 
-This module contains the pure JAX functions for the CRL algorithm.
-All hyperparameters are passed through `args` — no globals, no defaults.
+Pure JAX functions. No globals, no defaults, no circular imports.
+env is captured via closure, not passed as JIT argument.
 """
 
 import jax
@@ -9,21 +9,21 @@ import jax.numpy as jnp
 import flax.linen as nn
 
 from crl.networks import Actor, SA_encoder, G_encoder
+from crl.types import Transition
 from crl.buffer import TrajectoryUniformSamplingQueue
 from evaluator import CrlEvaluator
 
 
-def make_actor_step(actor, mode="stochastic"):
-    """Create an actor step function.
+def make_actor_step(actor, env, mode="stochastic"):
+    """Create an actor step function. env is captured via closure (not JIT arg).
 
-    mode: "deterministic", "stochastic", or int K for multi-sample.
+    mode: "deterministic" or "stochastic"
     """
     if mode == "deterministic":
-        def actor_step(training_state, env, env_state, extra_fields):
+        def actor_step(training_state, env_state, extra_fields):
             means, _ = actor.apply(training_state.actor_state.params, env_state.obs)
             actions = nn.tanh(means)
             nstate = env.step(env_state, actions)
-            from train import Transition
             return nstate, Transition(
                 observation=env_state.obs, action=actions, reward=nstate.reward,
                 discount=1 - nstate.done,
@@ -32,12 +32,11 @@ def make_actor_step(actor, mode="stochastic"):
         return actor_step
 
     elif mode == "stochastic":
-        def actor_step(training_state, env, env_state, key, extra_fields):
+        def actor_step(training_state, env_state, key, extra_fields):
             means, log_stds = actor.apply(training_state.actor_state.params, env_state.obs)
             stds = jnp.exp(log_stds)
             actions = nn.tanh(means + stds * jax.random.normal(key, shape=means.shape, dtype=means.dtype))
             nstate = env.step(env_state, actions)
-            from train import Transition
             return nstate, Transition(
                 observation=env_state.obs, action=actions, reward=nstate.reward,
                 discount=1 - nstate.done,
@@ -49,10 +48,14 @@ def make_actor_step(actor, mode="stochastic"):
         raise ValueError(f"Unknown actor mode: {mode}")
 
 
-def make_multi_sample_actor_step(actor, sa_encoder, g_encoder, K):
-    """Create a multi-sample actor step function (K actions, pick best via Q)."""
+def make_multi_sample_actor_step(actor, sa_encoder, g_encoder, env, obs_dim, goal_start_idx, goal_end_idx, K):
+    """Create a multi-sample actor step function.
 
-    def multi_sample_actor_step(training_state, env, env_state, key, extra_fields):
+    Samples K actions, picks best via Q-value (contrastive distance).
+    env, obs_dim, goal indices captured via closure.
+    """
+
+    def multi_sample_actor_step(training_state, env_state, key, extra_fields):
         keys = jax.random.split(key, K)
         means, log_stds = actor.apply(training_state.actor_state.params, env_state.obs)
         stds = jnp.exp(log_stds)
@@ -61,37 +64,67 @@ def make_multi_sample_actor_step(actor, sa_encoder, g_encoder, K):
             for k in keys
         ])
 
-        from train import Args
-        obs_dim = training_state.actor_state.params  # placeholder — need args.obs_dim
-        # This function needs obs_dim, goal_start_idx, goal_end_idx from args
-        # They'll be captured via closure in train.py
-        raise NotImplementedError("Multi-sample actor step needs closure over args")
+        state = env_state.obs[:, :obs_dim]
+        goal = env_state.obs[:, obs_dim:]
+
+        sa_reprs = jax.vmap(
+            lambda a: sa_encoder.apply(training_state.critic_state.params["sa_encoder"], state, a)
+        )(actions)
+        g_repr = g_encoder.apply(training_state.critic_state.params["g_encoder"], goal)
+
+        q_values = -jnp.sqrt(jnp.sum((sa_reprs - g_repr) ** 2, axis=-1))
+        best_action_idx = jnp.argmax(q_values, axis=0)
+        best_actions = jnp.take_along_axis(actions, best_action_idx[None, :, None], axis=0)[0]
+
+        nstate = env.step(env_state, best_actions)
+        return nstate, Transition(
+            observation=env_state.obs, action=best_actions, reward=nstate.reward,
+            discount=1 - nstate.done,
+            extras={"state_extras": {x: nstate.info[x] for x in extra_fields}},
+        )
 
     return multi_sample_actor_step
 
 
-def make_get_experience(actor_step_fn, replay_buffer, args):
-    """Create the get_experience function (collect trajectory + insert into buffer)."""
+def make_get_experience(actor_step_fn, replay_buffer, unroll_length):
+    """Create get_experience. unroll_length captured via closure."""
 
     @jax.jit
-    def get_experience(training_state, env_state, buffer_state, key, env):
-        @jax.jit
+    def get_experience(training_state, env_state, buffer_state, key):
         def f(carry, unused_t):
             env_state, current_key = carry
             current_key, next_key = jax.random.split(current_key)
-            env_state, transition = actor_step_fn(training_state, env, env_state, current_key,
+            env_state, transition = actor_step_fn(training_state, env_state, current_key,
                                                   extra_fields=("truncation", "seed"))
             return (env_state, next_key), transition
 
-        (env_state, _), data = jax.lax.scan(f, (env_state, key), (), length=args.unroll_length)
+        (env_state, _), data = jax.lax.scan(f, (env_state, key), (), length=unroll_length)
         buffer_state = replay_buffer.insert(buffer_state, data)
         return env_state, buffer_state
 
     return get_experience
 
 
-def make_update_actor(actor, sa_encoder, g_encoder, args):
-    """Create the actor + alpha update function."""
+def make_prefill(get_experience, env_steps_per_actor_step):
+    """Create prefill_replay_buffer using jax.lax.scan (not Python loop)."""
+
+    def prefill_replay_buffer(training_state, env_state, buffer_state, key, num_prefill_actor_steps):
+        def f(carry, unused):
+            training_state, env_state, buffer_state, key = carry
+            key, new_key = jax.random.split(key)
+            env_state, buffer_state = get_experience(training_state, env_state, buffer_state, key)
+            training_state = training_state.replace(
+                env_steps=training_state.env_steps + env_steps_per_actor_step)
+            return (training_state, env_state, buffer_state, new_key), ()
+
+        return jax.lax.scan(f, (training_state, env_state, buffer_state, key),
+                            (), length=num_prefill_actor_steps)[0]
+
+    return prefill_replay_buffer
+
+
+def make_update_actor(actor, sa_encoder, g_encoder, target_entropy, args):
+    """Create actor + alpha update. target_entropy and args captured via closure."""
 
     @jax.jit
     def update_actor_and_alpha(transitions, training_state, key):
@@ -125,9 +158,7 @@ def make_update_actor(actor, sa_encoder, g_encoder, args):
 
         def alpha_loss(alpha_params, log_prob):
             alpha = jnp.exp(alpha_params["log_alpha"])
-            target_entropy = -args.entropy_param * training_state.actor_state.params  # placeholder
-            # Actually need action_size — will be passed via args
-            return jnp.mean(alpha * jnp.mean(jax.lax.stop_gradient(-log_prob - (-args.entropy_param * 8))))  # placeholder
+            return jnp.mean(alpha * jnp.mean(jax.lax.stop_gradient(-log_prob - target_entropy)))
 
         (actorloss, log_prob), actor_grad = jax.value_and_grad(actor_loss, has_aux=True)(
             training_state.actor_state.params, training_state.critic_state.params,
@@ -149,7 +180,7 @@ def make_update_actor(actor, sa_encoder, g_encoder, args):
 
 
 def make_update_critic(sa_encoder, g_encoder, args):
-    """Create the critic update function."""
+    """Create critic update. args captured via closure."""
 
     @jax.jit
     def update_critic(transitions, training_state, key):
@@ -190,8 +221,6 @@ def make_update_critic(sa_encoder, g_encoder, args):
 
 
 def make_sgd_step(update_actor_and_alpha, update_critic):
-    """Create the combined SGD step function."""
-
     @jax.jit
     def sgd_step(carry, transitions):
         training_state, key = carry
@@ -199,20 +228,18 @@ def make_sgd_step(update_actor_and_alpha, update_critic):
         training_state, actor_metrics = update_actor_and_alpha(transitions, training_state, actor_key)
         training_state, critic_metrics = update_critic(transitions, training_state, critic_key)
         training_state = training_state.replace(gradient_steps=training_state.gradient_steps + 1)
-        metrics = {**actor_metrics, **critic_metrics}
-        return (training_state, key), metrics
-
+        return (training_state, key), {**actor_metrics, **critic_metrics}
     return sgd_step
 
 
 def make_training_step(sgd_step, get_experience, replay_buffer, args):
-    """Create the training step function (one step = collect + update)."""
+    """args captured via closure."""
 
     @jax.jit
-    def training_step(training_state, env_state, buffer_state, key, t, env):
+    def training_step(training_state, env_state, buffer_state, key, t=None):
         experience_key1, experience_key2, sampling_key, training_key, sgd_batches_key = jax.random.split(key, 5)
 
-        env_state, buffer_state = get_experience(training_state, env_state, buffer_state, experience_key1, env)
+        env_state, buffer_state = get_experience(training_state, env_state, buffer_state, experience_key1)
         training_state = training_state.replace(
             env_steps=training_state.env_steps + args.env_steps_per_actor_step)
 
@@ -230,7 +257,6 @@ def make_training_step(sgd_step, get_experience, replay_buffer, args):
 
         transitions = jax.tree_util.tree_map(
             lambda x: jnp.reshape(x, (-1,) + x.shape[2:], order="F"), transitions)
-
         permutation = jax.random.permutation(experience_key2, len(transitions.observation))
         transitions = jax.tree_util.tree_map(lambda x: x[permutation], transitions)
 
@@ -251,15 +277,14 @@ def make_training_step(sgd_step, get_experience, replay_buffer, args):
 
 
 def make_training_epoch(training_step, replay_buffer, args):
-    """Create the training epoch function (multiple training steps)."""
+    """args captured via closure."""
 
     @jax.jit
-    def training_epoch(training_state, env_state, buffer_state, key, env):
-        @jax.jit
+    def training_epoch(training_state, env_state, buffer_state, key):
         def f(carry, t):
             ts, es, bs, k = carry
             k, train_key = jax.random.split(k, 2)
-            (ts, es, bs), metrics = training_step(ts, es, bs, train_key, t, env)
+            (ts, es, bs), metrics = training_step(ts, es, bs, train_key, t)
             return (ts, es, bs, k), metrics
 
         (training_state, env_state, buffer_state, key), metrics = jax.lax.scan(
@@ -272,17 +297,43 @@ def make_training_epoch(training_step, replay_buffer, args):
     return training_epoch
 
 
-def setup_evaluator(actor, sa_encoder, g_encoder, eval_env, args, eval_env_key):
-    """Setup the evaluator based on eval_actor mode."""
+def setup_evaluator(actor, sa_encoder, g_encoder, eval_env, obs_dim, args, eval_env_key):
+    """Setup evaluator. eval_env captured via closure in actor steps."""
+
     if args.eval_actor == 0:
-        deterministic_step = make_actor_step(actor, mode="deterministic")
-        return CrlEvaluator(deterministic_step, eval_env,
-                            num_eval_envs=args.num_eval_envs,
-                            episode_length=args.episode_length, key=eval_env_key)
+        step_fn = make_actor_step(actor, eval_env, mode="deterministic")
+        return CrlEvaluator(
+            lambda ts, env, es, extra_fields: step_fn(ts, es, extra_fields),
+            eval_env, num_eval_envs=args.num_eval_envs,
+            episode_length=args.episode_length, key=eval_env_key)
+
     elif args.eval_actor == 1:
-        stochastic_step = make_actor_step(actor, mode="stochastic")
-        return CrlEvaluator(stochastic_step, eval_env,
-                            num_eval_envs=args.num_eval_envs,
+        _key = [jax.random.PRNGKey(0)]  # mutable container for key updates
+        def eval_step(ts, env, es, extra_fields):
+            _key[0], k = jax.random.split(_key[0])
+            means, log_stds = actor.apply(ts.actor_state.params, es.obs)
+            stds = jnp.exp(log_stds)
+            actions = nn.tanh(means + stds * jax.random.normal(k, shape=means.shape, dtype=means.dtype))
+            nstate = env.step(es, actions)
+            return nstate, Transition(
+                observation=es.obs, action=actions, reward=nstate.reward,
+                discount=1 - nstate.done,
+                extras={"state_extras": {x: nstate.info[x] for x in extra_fields}},
+            )
+        return CrlEvaluator(eval_step, eval_env, num_eval_envs=args.num_eval_envs,
                             episode_length=args.episode_length, key=eval_env_key)
+
+    elif args.eval_actor > 1:
+        K = args.eval_actor
+        multi_step = make_multi_sample_actor_step(
+            actor, sa_encoder, g_encoder, eval_env,
+            obs_dim, args.goal_start_idx, args.goal_end_idx, K)
+        def eval_step(ts, env, es, extra_fields):
+            key = jax.random.fold_in(jax.random.PRNGKey(0), ts.env_steps)
+            nstate, transition = multi_step(ts, es, key, extra_fields)
+            return nstate, transition
+        return CrlEvaluator(eval_step, eval_env, num_eval_envs=args.num_eval_envs,
+                            episode_length=args.episode_length, key=eval_env_key)
+
     else:
-        raise ValueError(f"eval_actor={args.eval_actor} not supported (use 0 or 1)")
+        raise ValueError(f"eval_actor={args.eval_actor} not supported")

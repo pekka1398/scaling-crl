@@ -63,12 +63,26 @@ def make_env(env_id: str):
     # Maze pattern matching
     for prefix, module, cls_name, obs_dim, gs, ge in _MAZE_PATTERNS:
         if env_id.startswith(prefix) and "maze" in env_id:
+            layout = env_id[len(prefix):]
+            # Generalization envs
+            if "gen" in layout:
+                if "ant" not in prefix:
+                    raise NotImplementedError(f"Generalization only for ant mazes: {env_id}")
+                from envs.ant_maze_generalization import AntMazeGeneralization
+                gen_idx = layout.find("gen")
+                maze_layout_name = layout[:gen_idx - 1]
+                generalization_config = layout[gen_idx + 4:]
+                env = AntMazeGeneralization(
+                    backend="spring",
+                    exclude_current_positions_from_observation=False,
+                    terminate_when_unhealthy=True,
+                    maze_layout_name=maze_layout_name,
+                    generalization_config=generalization_config)
+                info = EnvInfo(obs_dim=obs_dim, goal_start_idx=gs, goal_end_idx=ge)
+                return env, info
+
             mod = importlib.import_module(module)
             cls = getattr(mod, cls_name)
-            # Extract maze layout name (e.g. "ant_big_maze" → "big_maze", "humanoid_u_maze" → "u_maze")
-            layout = env_id[len(prefix):]
-            if "gen" in layout:
-                raise NotImplementedError(f"Generalization envs not in registry: {env_id}")
             env = cls(backend="spring", exclude_current_positions_from_observation=False,
                       terminate_when_unhealthy=True, maze_layout_name=layout) if "ant" in prefix else \
                   cls(backend="spring", maze_layout_name=layout)
