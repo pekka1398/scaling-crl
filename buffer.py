@@ -165,7 +165,6 @@ class TrajectoryUniformSamplingQueue():
 
         flatten_crl_fn takes care of this
         '''
-        print(f"buffer_state.data[:, envs_idxs, :].shape: {buffer_state.data[:, envs_idxs, :].shape}", flush=True)
         batch = create_batch_vmaped(buffer_state.data[:, envs_idxs, :], matrix)
         transitions = self._unflatten_fn(batch)
         return buffer_state.replace(key=key), transitions
@@ -226,7 +225,7 @@ class TrajectoryUniformSamplingQueue():
         }
 
         return transition._replace(
-            observation=jnp.squeeze(new_obs),   #this has shape (num_envs, episode_length-1, obs_size)
+            observation=jnp.squeeze(new_obs),   # shape: (episode_length-1, obs_size) after vmap squeeze
             action=jnp.squeeze(transition.action[:-1]),
             reward=jnp.squeeze(transition.reward[:-1]),
             discount=jnp.squeeze(transition.discount[:-1]),

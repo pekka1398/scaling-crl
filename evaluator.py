@@ -5,7 +5,6 @@ import jax.numpy as jnp
 import flax.linen as nn
 
 from brax import envs
-from envs.ant import Ant
 from typing import NamedTuple
 from collections import namedtuple
 
@@ -60,7 +59,11 @@ class CrlEvaluator():
           # (np.min, "_min"),
       ]
 
-      print("Available keys in episode_metrics:", eval_metrics.episode_metrics.keys())
+      # Brax EvalWrapper sums per-step metrics over each episode.
+      # success = (dist < 0.5) per step → episode_success = total steps within 0.5 of goal
+      # success_easy = (dist < 2.0) per step → episode_success_easy = total steps within 2.0 of goal
+      # dist = distance_to_target per step → episode_dist = sum of distances over the episode
+      # These are NOT rates — divide by avg_episode_length for per-step averages.
       for (fn, suffix) in aggregating_fns:
           metrics.update(
               {
@@ -68,7 +71,7 @@ class CrlEvaluator():
                       fn(eval_metrics.episode_metrics[name]) if aggregate_episodes else eval_metrics.episode_metrics[name]
                   )
                   for name in ['reward', 'success', 'success_easy', 'success_hard', 'dist', 'distance_from_origin']
-                  if name in eval_metrics.episode_metrics #THIS WAS ADDED BY ME (for arm tasks, may not be)
+                  if name in eval_metrics.episode_metrics
               }
           )
 

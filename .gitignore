@@ -6,3 +6,6 @@ __pycache__/
 *.pyc
 *.pkl
 /tmp/
+_old/
+slurm-*.out
+infra/snapshots

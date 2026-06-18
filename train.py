@@ -1,9 +1,7 @@
 import os
+import shutil
 import threading
 import jax
-import jax._src.cache as jax_cache
-jax_cache.set_cache_dir("/tmp/jax_cache")
-os.makedirs("/tmp/jax_cache", exist_ok=True)
 import flax
 import tyro
 import time
@@ -30,16 +28,16 @@ from buffer import TrajectoryUniformSamplingQueue
 
 @dataclass
 class Args:
-    exp_name: str = "train"
+    exp_name: str = ""            # Unique experiment name — used for log/ckpt/wandb naming
     seed: int = 1000
     torch_deterministic: bool = True
     cuda: bool = True
     track: bool = True
-    wandb_project_name: str = "clean_JaxGCRL_test"
-    wandb_entity: str = 'wang-kevin3290-princeton-university'
+    wandb_project_name: str = "scaling-crl-nano4"
+    wandb_entity: str = 'sungwayne99999-national-cheng-kung-university-co-op'
     wandb_mode: str = 'offline'
     wandb_dir: str = '.'
-    wandb_group: str = '.'
+    wandb_group: str = ""
     capture_vis: bool = True
     vis_length: int = 1000
     checkpoint: bool = True
@@ -110,20 +108,20 @@ class Args:
     num_training_steps_per_epoch : int = 0
     """the number of training steps per epoch(computed in runtime)"""
 
-lecun_unfirom = variance_scaling(1/3, "fan_in", "uniform")
+lecun_uniform = variance_scaling(1/3, "fan_in", "uniform")
 bias_init = nn.initializers.zeros
 def residual_block(x, width, normalize, activation):
     identity = x
-    x = nn.Dense(width, kernel_init=lecun_unfirom, bias_init=bias_init)(x)
+    x = nn.Dense(width, kernel_init=lecun_uniform, bias_init=bias_init)(x)
     x = normalize(x)
     x = activation(x)
-    x = nn.Dense(width, kernel_init=lecun_unfirom, bias_init=bias_init)(x)
+    x = nn.Dense(width, kernel_init=lecun_uniform, bias_init=bias_init)(x)
     x = normalize(x)
     x = activation(x)
-    x = nn.Dense(width, kernel_init=lecun_unfirom, bias_init=bias_init)(x)
+    x = nn.Dense(width, kernel_init=lecun_uniform, bias_init=bias_init)(x)
     x = normalize(x)
     x = activation(x)
-    x = nn.Dense(width, kernel_init=lecun_unfirom, bias_init=bias_init)(x)
+    x = nn.Dense(width, kernel_init=lecun_uniform, bias_init=bias_init)(x)
     x = normalize(x)
     x = activation(x)
     x = x + identity
@@ -138,7 +136,7 @@ class SA_encoder(nn.Module):
     @nn.compact
     def __call__(self, s: jnp.ndarray, a: jnp.ndarray):
 
-        lecun_unfirom = variance_scaling(1/3, "fan_in", "uniform")
+        lecun_uniform = variance_scaling(1/3, "fan_in", "uniform")
         bias_init = nn.initializers.zeros
         
         if self.norm_type == "layer_norm":
@@ -153,14 +151,14 @@ class SA_encoder(nn.Module):
             
         x = jnp.concatenate([s, a], axis=-1)
         #Initial layer
-        x = nn.Dense(self.network_width, kernel_init=lecun_unfirom, bias_init=bias_init)(x)
+        x = nn.Dense(self.network_width, kernel_init=lecun_uniform, bias_init=bias_init)(x)
         x = normalize(x)
         x = activation(x)
         #Residual blocks
         for i in range(self.network_depth // 4):
             x = residual_block(x, self.network_width, normalize, activation)
         #Final layer
-        x = nn.Dense(64, kernel_init=lecun_unfirom, bias_init=bias_init)(x)
+        x = nn.Dense(64, kernel_init=lecun_uniform, bias_init=bias_init)(x)
         return x
     
 class G_encoder(nn.Module):
@@ -172,7 +170,7 @@ class G_encoder(nn.Module):
     @nn.compact
     def __call__(self, g: jnp.ndarray):
 
-        lecun_unfirom = variance_scaling(1/3, "fan_in", "uniform")
+        lecun_uniform = variance_scaling(1/3, "fan_in", "uniform")
         bias_init = nn.initializers.zeros
 
         if self.norm_type == "layer_norm":
@@ -187,14 +185,14 @@ class G_encoder(nn.Module):
         
         x = g
         #Initial layer
-        x = nn.Dense(self.network_width, kernel_init=lecun_unfirom, bias_init=bias_init)(x)
+        x = nn.Dense(self.network_width, kernel_init=lecun_uniform, bias_init=bias_init)(x)
         x = normalize(x)
         x = activation(x)
         #Residual blocks
         for i in range(self.network_depth // 4):
             x = residual_block(x, self.network_width, normalize, activation)
         #Final layer
-        x = nn.Dense(64, kernel_init=lecun_unfirom, bias_init=bias_init)(x)
+        x = nn.Dense(64, kernel_init=lecun_uniform, bias_init=bias_init)(x)
         return x
   
 class Actor(nn.Module):
@@ -219,19 +217,19 @@ class Actor(nn.Module):
         else:
             activation = nn.swish
 
-        lecun_unfirom = variance_scaling(1/3, "fan_in", "uniform")
+        lecun_uniform = variance_scaling(1/3, "fan_in", "uniform")
         bias_init = nn.initializers.zeros
     
         #Initial layer
-        x = nn.Dense(self.network_width, kernel_init=lecun_unfirom, bias_init=bias_init)(x)
+        x = nn.Dense(self.network_width, kernel_init=lecun_uniform, bias_init=bias_init)(x)
         x = normalize(x)
         x = activation(x)
         #Residual blocks
         for i in range(self.network_depth // 4):
             x = residual_block(x, self.network_width, normalize, activation)
         #Final layer
-        mean = nn.Dense(self.action_size, kernel_init=lecun_unfirom, bias_init=bias_init)(x)
-        log_std = nn.Dense(self.action_size, kernel_init=lecun_unfirom, bias_init=bias_init)(x)
+        mean = nn.Dense(self.action_size, kernel_init=lecun_uniform, bias_init=bias_init)(x)
+        log_std = nn.Dense(self.action_size, kernel_init=lecun_uniform, bias_init=bias_init)(x)
         
         log_std = nn.tanh(log_std)
         log_std = self.LOG_STD_MIN + 0.5 * (self.LOG_STD_MAX - self.LOG_STD_MIN) * (log_std + 1)  # From SpinUp / Denis Yarats
@@ -257,24 +255,76 @@ class Transition(NamedTuple):
     extras: jnp.ndarray = ()
 
 def load_params(path: str):
-    with epath.Path(path).open('rb') as fin:
-        buf = fin.read()
-    return pickle.loads(buf)
+    """Load checkpoint, returns None if corrupt."""
+    try:
+        with epath.Path(path).open('rb') as fin:
+            buf = fin.read()
+        return pickle.loads(buf)
+    except (EOFError, pickle.UnpicklingError, OSError) as e:
+        print(f"WARNING: Corrupt checkpoint {path}: {e}", flush=True)
+        return None
 
 def save_params_async(path: str, params: Any):
-    """Saves parameters in background thread (non-blocking)."""
-    def _save():
-        with epath.Path(path).open("wb") as fout:
-            fout.write(pickle.dumps(params))
+    """Saves parameters in background thread (non-blocking).
+    
+    Two-phase staging: write to /tmp first (local disk, fast),
+    then copy to final destination on shared storage (WekaFS).
+    Uses atomic rename on /tmp to prevent corrupt partial writes.
+    """
     cpu_params = jax.device_get(params)
+    exp_name = os.path.basename(os.path.dirname(path))
+    fname = os.path.basename(path)
+    tmp_dir = f"/tmp/ckpt_staging_{exp_name}"
+    
+    def _save():
+        try:
+            os.makedirs(tmp_dir, exist_ok=True)
+            tmp_path = os.path.join(tmp_dir, fname + ".tmp")
+            # Phase 1: write locally with atomic rename
+            with open(tmp_path, "wb") as fout:
+                fout.write(pickle.dumps(cpu_params))
+            os.rename(tmp_path, os.path.join(tmp_dir, fname))
+            # Phase 2: copy to shared storage
+            shutil.copy2(os.path.join(tmp_dir, fname), path)
+            # Cleanup staging
+            try:
+                os.remove(os.path.join(tmp_dir, fname))
+            except OSError:
+                pass
+        except OSError as e:
+            print(f"WARNING: Staging write failed ({e}), falling back to direct write: {path}", flush=True)
+            with open(path, "wb") as fout:
+                fout.write(pickle.dumps(cpu_params))
+    
     t = threading.Thread(target=_save, args=())
     t.start()
     return t
 
-def save_params(path: str, params: Any):
-    """Saves parameters in flax format."""
-    with epath.Path(path).open("wb") as fout:
-        fout.write(pickle.dumps(params))
+def find_latest_checkpoint(save_path: str) -> str:
+    """Find the latest valid step_*.pkl in save_path, return path or empty string.
+    
+    Tries newest first, skips corrupt checkpoints.
+    """
+    import glob
+    ckpts = sorted(glob.glob(f"{save_path}/step_*.pkl"),
+                   key=lambda f: int(f.rsplit('_', 1)[-1].rsplit('.', 1)[0]),
+                   reverse=True)
+    for ckpt in ckpts:
+        # Quick size check — empty or tiny files are corrupt
+        if os.path.getsize(ckpt) > 100:
+            return ckpt
+    return ""
+
+def cleanup_old_checkpoints(save_path: str, keep: int = 3):
+    """Remove old step_*.pkl, keeping only the latest `keep`."""
+    import glob
+    ckpts = sorted(glob.glob(f"{save_path}/step_*.pkl"),
+                   key=lambda f: int(f.rsplit('_', 1)[-1].rsplit('.', 1)[0]))
+    for old in ckpts[:-keep]:
+        try:
+            os.remove(old)
+        except OSError:
+            pass
 
 if __name__ == "__main__":
 
@@ -298,12 +348,15 @@ if __name__ == "__main__":
     args.num_training_steps_per_epoch = (args.total_env_steps - args.num_prefill_env_steps) // (args.num_epochs * args.env_steps_per_actor_step)
     print(f"num_training_steps_per_epoch: {args.num_training_steps_per_epoch}", flush=True)
     
-    run_name = f"{args.env_id}{'_' + args.eval_env_id if args.eval_env_id else ''}_{args.batch_size}_{args.total_env_steps}_nenvs:{args.num_envs}_criticwidth:{args.critic_network_width}_actorwidth:{args.actor_network_width}_criticdepth:{args.critic_depth}_actordepth:{args.actor_depth}_actorskip:{args.actor_skip_connections}_criticskip:{args.critic_skip_connections}_{args.seed}"
+    if args.exp_name:
+        run_name = args.exp_name
+    else:
+        run_name = f"{args.env_id}{'_' + args.eval_env_id if args.eval_env_id else ''}_{args.batch_size}_{args.total_env_steps}_nenvs:{args.num_envs}_criticwidth:{args.critic_network_width}_actorwidth:{args.actor_network_width}_criticdepth:{args.critic_depth}_actordepth:{args.actor_depth}_actorskip:{args.actor_skip_connections}_criticskip:{args.critic_skip_connections}_{args.seed}"
     print(f"run_name: {run_name}", flush=True)
     
     if args.track:
 
-        if args.wandb_group ==  '.':
+        if not args.wandb_group:
             args.wandb_group = None
             
         wandb.init(
@@ -324,10 +377,13 @@ if __name__ == "__main__":
         
     if args.checkpoint:
         from pathlib import Path
-        from datetime import datetime
-        short_run_name = f"runs/{args.env_id}_{args.seed}_{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+        if args.exp_name:
+            short_run_name = f"runs/{args.exp_name}"
+        else:
+            from datetime import datetime
+            short_run_name = f"runs/{args.env_id}_{args.seed}_{datetime.now().strftime('%Y%m%d-%H%M%S')}"
         save_path = Path(args.wandb_dir) / Path(short_run_name)
-        os.mkdir(path=save_path)
+        os.makedirs(save_path, exist_ok=True)
 
     random.seed(args.seed)
     np.random.seed(args.seed)
@@ -546,6 +602,11 @@ if __name__ == "__main__":
     eval_env_state = jax.jit(eval_env.reset)(eval_env_keys)
     eval_env.step = jax.jit(eval_env.step)
 
+    if args.checkpoint:
+        # Save args AFTER make_env fills in runtime fields (obs_dim, goal_start_idx, etc.)
+        with open(f"{save_path}/args.pkl", 'wb') as f:
+            pickle.dump(args, f)
+        print(f"Saved args to {save_path}/args.pkl", flush=True)
 
     # Network setup
     # Actor
@@ -590,15 +651,97 @@ if __name__ == "__main__":
     )
 
     # Resume from checkpoint if specified
+    start_epoch = 0
+    if args.resume_from and not args.checkpoint:
+        print("WARNING: --resume_from set but --no-checkpoint — resume needs checkpoint path, ignoring", flush=True)
+        args.resume_from = ""
+
     if args.resume_from:
+        # Auto-resume: find latest checkpoint in save_path
+        if args.resume_from == "auto":
+            auto_ckpt = find_latest_checkpoint(str(save_path))
+            if not auto_ckpt:
+                print("Auto-resume: no checkpoint found, starting from scratch", flush=True)
+            else:
+                args.resume_from = auto_ckpt
+                print(f"Auto-resume: found latest checkpoint: {auto_ckpt}", flush=True)
+
+    if args.resume_from and args.resume_from != "auto":
         print(f"Resuming from checkpoint: {args.resume_from}", flush=True)
-        alpha_params, actor_params, critic_params = load_params(args.resume_from)
-        training_state = training_state.replace(
-            actor_state=training_state.actor_state.replace(params=actor_params),
-            critic_state=training_state.critic_state.replace(params=critic_params),
-            alpha_state=training_state.alpha_state.replace(params=alpha_params),
-        )
-        print("Checkpoint loaded successfully", flush=True)
+        # Validate checkpoint matches current experiment config
+        ckpt_dir = os.path.dirname(args.resume_from)
+        ckpt_args_path = os.path.join(ckpt_dir, "args.pkl")
+        if os.path.exists(ckpt_args_path):
+            try:
+                import pickle as _pkl
+                with open(ckpt_args_path, 'rb') as _f:
+                    ckpt_args = _pkl.load(_f)
+                mismatches = []
+                for ck_key in ['env_id', 'actor_depth', 'critic_depth', 'seed']:
+                    if hasattr(ckpt_args, ck_key) and hasattr(args, ck_key):
+                        if getattr(ckpt_args, ck_key) != getattr(args, ck_key):
+                            mismatches.append(f"{ck_key}: checkpoint={getattr(ckpt_args, ck_key)} vs current={getattr(args, ck_key)}")
+                if mismatches:
+                    print(f"ERROR: Checkpoint config mismatch! {'; '.join(mismatches)}", flush=True)
+                    raise ValueError(f"Checkpoint config mismatch: {'; '.join(mismatches)}")
+                print(f"Checkpoint config validated OK (env_id={args.env_id}, depth={args.actor_depth}, seed={args.seed})", flush=True)
+            except Exception as e:
+                if "mismatch" in str(e):
+                    raise
+                print(f"WARNING: Could not validate checkpoint config: {e}", flush=True)
+        else:
+            print(f"WARNING: No args.pkl found at {ckpt_args_path}, cannot validate checkpoint", flush=True)
+
+        ckpt_data = load_params(args.resume_from)
+        if ckpt_data is None:
+            print(f"ERROR: Checkpoint {args.resume_from} is corrupt or unreadable", flush=True)
+            print("Attempting to find next valid checkpoint...", flush=True)
+            # Try progressively older checkpoints
+            import glob as _glob
+            all_ckpts = sorted(_glob.glob(f"{save_path}/step_*.pkl"),
+                              key=lambda f: int(f.rsplit('_', 1)[-1].rsplit('.', 1)[0]),
+                              reverse=True)
+            for alt_ckpt in all_ckpts:
+                if alt_ckpt == args.resume_from:
+                    continue
+                print(f"  Trying {alt_ckpt}...", flush=True)
+                ckpt_data = load_params(alt_ckpt)
+                if ckpt_data is not None:
+                    args.resume_from = alt_ckpt
+                    print(f"  OK: using {alt_ckpt}", flush=True)
+                    break
+            if ckpt_data is None:
+                print("No valid checkpoint found, starting from scratch", flush=True)
+                args.resume_from = ""
+        if ckpt_data is not None:
+            if isinstance(ckpt_data, dict) and 'actor_params' in ckpt_data:
+                # New format with metadata
+                alpha_params = ckpt_data['alpha_params']
+                actor_params = ckpt_data['actor_params']
+                critic_params = ckpt_data['critic_params']
+                start_epoch = ckpt_data['epoch'] + 1
+                ckpt_env_steps = ckpt_data['env_steps']
+                ckpt_gradient_steps = ckpt_data['gradient_steps']
+            else:
+                # Old format (bare tuple)
+                alpha_params, actor_params, critic_params = ckpt_data
+                ckpt_env_steps = None
+                ckpt_gradient_steps = None
+
+        if ckpt_data is not None:
+            training_state = training_state.replace(
+                actor_state=training_state.actor_state.replace(params=actor_params),
+                critic_state=training_state.critic_state.replace(params=critic_params),
+                alpha_state=training_state.alpha_state.replace(params=alpha_params),
+            )
+            if ckpt_env_steps is not None:
+                training_state = training_state.replace(
+                    env_steps=jnp.array(ckpt_env_steps),
+                    gradient_steps=jnp.array(ckpt_gradient_steps),
+                )
+                print(f"Restored counters: epoch={start_epoch}, env_steps={ckpt_env_steps}, gradient_steps={ckpt_gradient_steps}", flush=True)
+            print(f"Checkpoint loaded successfully, resuming from epoch {start_epoch}", flush=True)
+
     #Replay Buffer
     dummy_obs = jnp.zeros((obs_size,))
     dummy_action = jnp.zeros((action_size,))
@@ -805,7 +948,7 @@ if __name__ == "__main__":
         metrics = {
             "sample_entropy": -log_prob,
             "actor_loss": actorloss,
-            "alph_aloss": alphaloss,   
+            "alpha_loss": alphaloss,
             "log_alpha": training_state.alpha_state.params["log_alpha"],
         }
 
@@ -835,19 +978,22 @@ if __name__ == "__main__":
             logsumexp = jax.nn.logsumexp(logits + 1e-6, axis=1)
             critic_loss += args.logsumexp_penalty_coeff * jnp.mean(logsumexp**2)
 
-            I, correct, logits_pos, logits_neg = jnp.zeros(1), jnp.zeros(1), jnp.zeros(1), jnp.zeros(1)
-                
+            # Compute metrics: diagonal = positive pairs, off-diagonal = negative
+            logits_pos = jnp.diag(logits)
+            mask = 1.0 - jnp.eye(logits.shape[0])
+            logits_neg_mean = (logits * mask).sum() / mask.sum()
+            correct = jnp.argmax(logits, axis=1) == jnp.arange(logits.shape[0])
 
-            return critic_loss, (logsumexp, I, correct, logits_pos, logits_neg)
+            return critic_loss, (logsumexp, correct, logits_pos, logits_neg_mean)
             
-        (loss, (logsumexp, I, correct, logits_pos, logits_neg)), grad = jax.value_and_grad(critic_loss, has_aux=True)(training_state.critic_state.params, transitions, key)
+        (loss, (logsumexp, correct, logits_pos, logits_neg_mean)), grad = jax.value_and_grad(critic_loss, has_aux=True)(training_state.critic_state.params, transitions, key)
         new_critic_state = training_state.critic_state.apply_gradients(grads=grad)
         training_state = training_state.replace(critic_state = new_critic_state)
 
         metrics = {
-            "categorical_accuracy": jnp.mean(correct),
-            "logits_pos": logits_pos,
-            "logits_neg": logits_neg,
+            "categorical_accuracy": jnp.mean(correct.astype(jnp.float32)),
+            "logits_pos": logits_pos.mean(),
+            "logits_neg": logits_neg_mean,
             "logsumexp": logsumexp.mean(),
             "critic_loss": loss,
         }
@@ -993,15 +1139,15 @@ if __name__ == "__main__":
     
     elif args.eval_actor > 1:
         key, eval_actor_key = jax.random.split(key)
+        _eval_actor_key = eval_actor_key
         evaluator = CrlEvaluator(
-            # Replace deterministic_actor_step with a partial function of multi_sample_actor_step
-            lambda training_state, env, env_state, extra_fields: multi_sample_actor_step(
-                training_state, 
-                env, 
-                env_state, 
-                eval_actor_key, 
-                args.eval_actor,
-                extra_fields
+            # Re-split key each call so action sampling varies across epochs
+            lambda training_state, env, env_state, extra_fields: (
+                multi_sample_actor_step(
+                    training_state, env, env_state,
+                    jax.random.fold_in(_eval_actor_key, training_state.env_steps),
+                    args.eval_actor, extra_fields
+                )
             ),
             eval_env,
             num_eval_envs=args.num_eval_envs,
@@ -1012,8 +1158,8 @@ if __name__ == "__main__":
 
     training_walltime = 0
     print('starting training....', flush=True)
-    start_time = time.time() 
-    for ne in range(args.num_epochs):
+    start_time = time.time()
+    for ne in range(start_epoch, args.num_epochs):
         
         t = time.time()
 
@@ -1040,10 +1186,18 @@ if __name__ == "__main__":
 
         if args.checkpoint:
             if ne < 5 or ne >= args.num_epochs - 5 or ne % 10 == 0:
-                # Save current policy and critic params.
-                params = (training_state.alpha_state.params, training_state.actor_state.params, training_state.critic_state.params)
+                # Save checkpoint with metadata
+                ckpt = {
+                    'alpha_params': training_state.alpha_state.params,
+                    'actor_params': training_state.actor_state.params,
+                    'critic_params': training_state.critic_state.params,
+                    'epoch': ne,
+                    'env_steps': int(training_state.env_steps),
+                    'gradient_steps': int(training_state.gradient_steps),
+                }
                 path = f"{save_path}/step_{int(training_state.env_steps)}.pkl"
-                save_params_async(path, params)
+                save_params_async(path, ckpt)
+                cleanup_old_checkpoints(str(save_path), keep=3)
         
         if args.track:
             wandb.log(metrics, step=ne)
@@ -1056,51 +1210,54 @@ if __name__ == "__main__":
 
     
     if args.checkpoint:
-        # Save current policy and critic params.
-        params = (training_state.alpha_state.params, training_state.actor_state.params, training_state.critic_state.params)
+        # Save final checkpoint with metadata
+        ckpt = {
+            'alpha_params': training_state.alpha_state.params,
+            'actor_params': training_state.actor_state.params,
+            'critic_params': training_state.critic_state.params,
+            'epoch': args.num_epochs - 1,
+            'env_steps': int(training_state.env_steps),
+            'gradient_steps': int(training_state.gradient_steps),
+        }
         path = f"{save_path}/final.pkl"
-        save_params_async(path, params)
+        save_params_async(path, ckpt)
+        cleanup_old_checkpoints(str(save_path), keep=3)
         
     # After training is complete, render the final policy
     if args.capture_vis:
         def render_policy(training_state, save_path):
-            """Renders the policy and saves it as an HTML file."""
+            """Renders the policy as an HTML file. Uses unwrapped env (single env)."""
+            render_env = make_env(args.eval_env_id)
+
             @jax.jit
             def policy_step(env_state, actor_params):
                 means, _ = actor.apply(actor_params, env_state.obs)
                 actions = nn.tanh(means)
-                next_state = env.step(env_state, actions)
-                return next_state, env_state 
-            
+                return render_env.step(env_state, actions)
+
             rollout_states = []
             for i in range(args.num_render):
-                env = make_env(args.eval_env_id)
-                
-                rng = jax.random.PRNGKey(seed=i+1)
-                env_state = jax.jit(env.reset)(rng)
-                
-                for _ in range(args.vis_length):
-                    env_state, current_state = policy_step(env_state, training_state.actor_state.params)
-                    rollout_states.append(current_state.pipeline_state)
-            
-            # Render and save
-            html_string = html.render(env.sys, rollout_states)
+                rng = jax.random.PRNGKey(args.seed * 1000 + i)
+                env_state = jax.jit(render_env.reset)(rng)
+
+                for step in range(args.episode_length):
+                    env_state = policy_step(env_state, training_state.actor_state.params)
+                    rollout_states.append(env_state.pipeline_state)
+                    if env_state.done:
+                        break
+
+            html_string = html.render(render_env.sys, rollout_states)
             render_path = f"{save_path}/vis.html"
             with open(render_path, "w") as f:
                 f.write(html_string)
-            wandb.log({"vis": wandb.Html(html_string)})
-            
+            if args.track:
+                wandb.log({"vis": wandb.Html(html_string)})
+
         print("Rendering final policy...", flush=True)
         try:
             render_policy(training_state, save_path)
         except Exception as e:
             print(f"Error rendering final policy: {e}", flush=True)
-        
-    #After training is complete, save the Args
-    if args.checkpoint:
-        with open(f"{save_path}/args.pkl", 'wb') as f:
-            pickle.dump(args, f)
-        print(f"Saved args to {save_path}/args.pkl", flush=True)
         
     #After training is complete, save the replay buffer (if save_buffer is 1, this takes a lot of memory)
     if args.checkpoint:
