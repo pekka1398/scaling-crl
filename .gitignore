@@ -8,4 +8,5 @@ __pycache__/
 /tmp/
 _old/
 slurm-*.out
-infra/snapshots
+infra/snapshots/
+infra/wandb_*.log

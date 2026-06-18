@@ -21,7 +21,7 @@ import numpy as np
 from brax import envs
 from brax.io import html
 
-from train import Actor, load_params, Args
+from train import Actor, load_legacy_checkpoint, create_checkpoint_manager, restore_checkpoint, find_legacy_checkpoint, Args
 import __main__
 __main__.Args = Args
 
@@ -70,20 +70,9 @@ def make_env_raw(env_id):
 
 def load_actor(exp_name, checkpoint=None):
     """Load checkpoint and return (actor, actor_params, env_id, seed)."""
-    if not checkpoint:
-        save_path = f"runs/{exp_name}"
-        checkpoint = os.path.join(save_path, "final.pkl")
-        if not os.path.exists(checkpoint):
-            import glob
-            ckpts = sorted(glob.glob(f"{save_path}/step_*.pkl"),
-                          key=lambda f: int(f.rsplit('_', 1)[-1].rsplit('.', 1)[0]))
-            if not ckpts:
-                print(f"ERROR: No checkpoint found in {save_path}")
-                return None
-            checkpoint = ckpts[-1]
-        print(f"Using checkpoint: {checkpoint}")
+    save_path = f"runs/{exp_name}" if exp_name else os.path.dirname(checkpoint or "")
 
-    args_path = os.path.join(os.path.dirname(checkpoint), "args.pkl")
+    args_path = os.path.join(save_path, "args.pkl")
     if os.path.exists(args_path):
         with open(args_path, 'rb') as f:
             ckpt_args = pickle.load(f)
@@ -96,9 +85,25 @@ def load_actor(exp_name, checkpoint=None):
     else:
         raise RuntimeError("args.pkl required to infer model architecture")
 
-    ckpt_data = load_params(checkpoint)
+    # Load checkpoint: try Orbax first, then legacy pickle
+    ckpt_data = None
+    if os.path.isdir(os.path.join(save_path, "checkpoints")):
+        manager = create_checkpoint_manager(save_path)
+        ckpt_data, step = restore_checkpoint(manager)
+        if ckpt_data is not None:
+            print(f"Loaded Orbax checkpoint at step {step}")
+
     if ckpt_data is None:
-        raise RuntimeError(f"Corrupt checkpoint: {checkpoint}")
+        if checkpoint:
+            ckpt_data = load_legacy_checkpoint(checkpoint)
+        else:
+            legacy_path = find_legacy_checkpoint(save_path)
+            if legacy_path:
+                ckpt_data = load_legacy_checkpoint(legacy_path)
+                print(f"Loaded legacy checkpoint: {legacy_path}")
+
+    if ckpt_data is None:
+        raise RuntimeError(f"No valid checkpoint found in {save_path}")
 
     if isinstance(ckpt_data, dict) and 'actor_params' in ckpt_data:
         actor_params = ckpt_data['actor_params']
@@ -157,14 +162,16 @@ def render_exp(exp_name, num_episodes=10, episode_length=1000, force=False):
 
 
 def render_all(num_episodes=10, force=False):
-    """Render all experiments with final.pkl."""
+    """Render all experiments with checkpoints."""
     ok = 0
     skipped = 0
     failed = 0
     for d in sorted(os.listdir("runs")):
-        if d == "_old" or not os.path.isdir(f"runs/{d}"):
+        if d.startswith("_") or d.startswith(".") or not os.path.isdir(f"runs/{d}"):
             continue
-        if not os.path.exists(f"runs/{d}/final.pkl"):
+        has_ckpt = (os.path.isdir(f"runs/{d}/checkpoints") or
+                    os.path.exists(f"runs/{d}/final.pkl"))
+        if not has_ckpt:
             continue
         print(f"\n{'='*60}")
         print(f"Rendering: {d}")

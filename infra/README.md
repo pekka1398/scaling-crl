@@ -46,7 +46,7 @@ Fields with defaults (can omit from YAML):
 | Compile log | `logs/compile_{exp_name}.log` | `logs/compile_ant_d8_s1000.log` |
 | Training log | `logs/{exp_name}.log` | `logs/ant_d8_s1000.log` |
 | Checkpoint dir | `runs/{exp_name}/` | `runs/ant_d8_s1000/` |
-| Checkpoint file | `runs/{exp_name}/step_{N}.pkl` | `runs/ant_d8_s1000/step_5000000.pkl` |
+| Checkpoint dir | `runs/{exp_name}/checkpoints/` | `runs/ant_d8_s1000/checkpoints/` |
 | Args dump | `runs/{exp_name}/args.pkl` | `runs/ant_d8_s1000/args.pkl` |
 | Wandb group | `{exp_name}` | `ant_d8_s1000` |
 
@@ -56,11 +56,10 @@ Fields with defaults (can omit from YAML):
 - Compile check before training (JIT warmup, 1 epoch, no checkpoint)
 - WANDB_MODE=offline, sync via wandb-osh daemon on login node
 - Default memory: 200G per job
+- Checkpoints via Orbax (atomic writes, auto-cleanup keep=3, auto-resume)
+- Legacy pickle checkpoints still loadable for old experiments
 
 ## Monitoring
-
-    # Snapshot daemon (run on login node)
-    bash infra/start_daemons.sh
 
     # View cluster status
     bash infra/monitor.sh              # all

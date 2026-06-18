@@ -1,6 +1,5 @@
 import os
-import shutil
-import threading
+import glob
 import jax
 import flax
 import tyro
@@ -9,6 +8,7 @@ import optax
 import wandb
 import pickle
 import random
+import orbax.checkpoint as ocp
 import wandb_osh
 import numpy as np
 import flax.linen as nn
@@ -254,8 +254,8 @@ class Transition(NamedTuple):
     discount: jnp.ndarray
     extras: jnp.ndarray = ()
 
-def load_params(path: str):
-    """Load checkpoint, returns None if corrupt."""
+def load_legacy_checkpoint(path: str):
+    """Load old pickle-format checkpoint. Returns None if corrupt."""
     try:
         with epath.Path(path).open('rb') as fin:
             buf = fin.read()
@@ -264,67 +264,47 @@ def load_params(path: str):
         print(f"WARNING: Corrupt checkpoint {path}: {e}", flush=True)
         return None
 
-def save_params_async(path: str, params: Any):
-    """Saves parameters in background thread (non-blocking).
-    
-    Two-phase staging: write to /tmp first (local disk, fast),
-    then copy to final destination on shared storage (WekaFS).
-    Uses atomic rename on /tmp to prevent corrupt partial writes.
-    """
-    cpu_params = jax.device_get(params)
-    exp_name = os.path.basename(os.path.dirname(path))
-    fname = os.path.basename(path)
-    tmp_dir = f"/tmp/ckpt_staging_{exp_name}"
-    
-    def _save():
-        try:
-            os.makedirs(tmp_dir, exist_ok=True)
-            tmp_path = os.path.join(tmp_dir, fname + ".tmp")
-            # Phase 1: write locally with atomic rename
-            with open(tmp_path, "wb") as fout:
-                fout.write(pickle.dumps(cpu_params))
-            os.rename(tmp_path, os.path.join(tmp_dir, fname))
-            # Phase 2: copy to shared storage
-            shutil.copy2(os.path.join(tmp_dir, fname), path)
-            # Cleanup staging
-            try:
-                os.remove(os.path.join(tmp_dir, fname))
-            except OSError:
-                pass
-        except OSError as e:
-            print(f"WARNING: Staging write failed ({e}), falling back to direct write: {path}", flush=True)
-            with open(path, "wb") as fout:
-                fout.write(pickle.dumps(cpu_params))
-    
-    t = threading.Thread(target=_save, args=())
-    t.start()
-    return t
+def create_checkpoint_manager(save_path: str):
+    """Create an Orbax CheckpointManager (atomic writes, auto-cleanup, async)."""
+    ckpt_dir = os.path.join(str(save_path), "checkpoints")
+    os.makedirs(ckpt_dir, exist_ok=True)
+    checkpointer = ocp.PyTreeCheckpointer()
+    options = ocp.CheckpointManagerOptions(max_to_keep=3)
+    return ocp.CheckpointManager(ckpt_dir, checkpointer, options)
 
-def find_latest_checkpoint(save_path: str) -> str:
-    """Find the latest valid step_*.pkl in save_path, return path or empty string.
-    
-    Tries newest first, skips corrupt checkpoints.
-    """
-    import glob
+def save_checkpoint(manager, training_state, epoch: int):
+    """Save checkpoint via Orbax. Step = env_steps for resume tracking."""
+    step = int(training_state.env_steps)
+    ckpt = {
+        'alpha_params': training_state.alpha_state.params,
+        'actor_params': training_state.actor_state.params,
+        'critic_params': training_state.critic_state.params,
+        'epoch': epoch,
+        'env_steps': step,
+        'gradient_steps': int(training_state.gradient_steps),
+    }
+    manager.save(step, ckpt, force=True)
+    manager.wait_until_finished()
+
+def restore_checkpoint(manager):
+    """Restore latest Orbax checkpoint. Returns (ckpt_dict, step) or (None, 0)."""
+    step = manager.latest_step()
+    if step is None:
+        return None, 0
+    return manager.restore(step), step
+
+def find_legacy_checkpoint(save_path: str) -> str:
+    """Find latest step_*.pkl or final.pkl (old format). Returns path or ''."""
     ckpts = sorted(glob.glob(f"{save_path}/step_*.pkl"),
                    key=lambda f: int(f.rsplit('_', 1)[-1].rsplit('.', 1)[0]),
                    reverse=True)
     for ckpt in ckpts:
-        # Quick size check — empty or tiny files are corrupt
         if os.path.getsize(ckpt) > 100:
             return ckpt
+    final = os.path.join(str(save_path), "final.pkl")
+    if os.path.exists(final) and os.path.getsize(final) > 100:
+        return final
     return ""
-
-def cleanup_old_checkpoints(save_path: str, keep: int = 3):
-    """Remove old step_*.pkl, keeping only the latest `keep`."""
-    import glob
-    ckpts = sorted(glob.glob(f"{save_path}/step_*.pkl"),
-                   key=lambda f: int(f.rsplit('_', 1)[-1].rsplit('.', 1)[0]))
-    for old in ckpts[:-keep]:
-        try:
-            os.remove(old)
-        except OSError:
-            pass
 
 if __name__ == "__main__":
 
@@ -650,85 +630,61 @@ if __name__ == "__main__":
         alpha_state=alpha_state,
     )
 
-    # Resume from checkpoint if specified
+    # Resume from checkpoint
     start_epoch = 0
+    ckpt_manager = None
+    if args.checkpoint:
+        ckpt_manager = create_checkpoint_manager(save_path)
+
     if args.resume_from and not args.checkpoint:
-        print("WARNING: --resume_from set but --no-checkpoint — resume needs checkpoint path, ignoring", flush=True)
+        print("WARNING: --resume_from set but --no-checkpoint, ignoring", flush=True)
         args.resume_from = ""
 
-    if args.resume_from:
-        # Auto-resume: find latest checkpoint in save_path
-        if args.resume_from == "auto":
-            auto_ckpt = find_latest_checkpoint(str(save_path))
-            if not auto_ckpt:
-                print("Auto-resume: no checkpoint found, starting from scratch", flush=True)
-            else:
-                args.resume_from = auto_ckpt
-                print(f"Auto-resume: found latest checkpoint: {auto_ckpt}", flush=True)
-
-    if args.resume_from and args.resume_from != "auto":
-        print(f"Resuming from checkpoint: {args.resume_from}", flush=True)
-        # Validate checkpoint matches current experiment config
-        ckpt_dir = os.path.dirname(args.resume_from)
-        ckpt_args_path = os.path.join(ckpt_dir, "args.pkl")
-        if os.path.exists(ckpt_args_path):
+    if args.resume_from and ckpt_manager is not None:
+        # Validate config against args.pkl
+        args_path = os.path.join(str(save_path), "args.pkl")
+        if os.path.exists(args_path):
             try:
-                import pickle as _pkl
-                with open(ckpt_args_path, 'rb') as _f:
-                    ckpt_args = _pkl.load(_f)
-                mismatches = []
+                with open(args_path, 'rb') as _f:
+                    ckpt_args = pickle.load(_f)
                 for ck_key in ['env_id', 'actor_depth', 'critic_depth', 'seed']:
-                    if hasattr(ckpt_args, ck_key) and hasattr(args, ck_key):
-                        if getattr(ckpt_args, ck_key) != getattr(args, ck_key):
-                            mismatches.append(f"{ck_key}: checkpoint={getattr(ckpt_args, ck_key)} vs current={getattr(args, ck_key)}")
-                if mismatches:
-                    print(f"ERROR: Checkpoint config mismatch! {'; '.join(mismatches)}", flush=True)
-                    raise ValueError(f"Checkpoint config mismatch: {'; '.join(mismatches)}")
-                print(f"Checkpoint config validated OK (env_id={args.env_id}, depth={args.actor_depth}, seed={args.seed})", flush=True)
+                    if hasattr(ckpt_args, ck_key) and getattr(ckpt_args, ck_key) != getattr(args, ck_key):
+                        raise ValueError(f"Checkpoint config mismatch: {ck_key}={getattr(ckpt_args, ck_key)} vs current={getattr(args, ck_key)}")
+                print(f"Config validated OK (env={args.env_id}, d={args.actor_depth}, seed={args.seed})", flush=True)
+            except ValueError:
+                raise
             except Exception as e:
-                if "mismatch" in str(e):
-                    raise
                 print(f"WARNING: Could not validate checkpoint config: {e}", flush=True)
-        else:
-            print(f"WARNING: No args.pkl found at {ckpt_args_path}, cannot validate checkpoint", flush=True)
 
-        ckpt_data = load_params(args.resume_from)
-        if ckpt_data is None:
-            print(f"ERROR: Checkpoint {args.resume_from} is corrupt or unreadable", flush=True)
-            print("Attempting to find next valid checkpoint...", flush=True)
-            # Try progressively older checkpoints
-            import glob as _glob
-            all_ckpts = sorted(_glob.glob(f"{save_path}/step_*.pkl"),
-                              key=lambda f: int(f.rsplit('_', 1)[-1].rsplit('.', 1)[0]),
-                              reverse=True)
-            for alt_ckpt in all_ckpts:
-                if alt_ckpt == args.resume_from:
-                    continue
-                print(f"  Trying {alt_ckpt}...", flush=True)
-                ckpt_data = load_params(alt_ckpt)
+        # Try Orbax first, then legacy pickle
+        ckpt_data, ckpt_step = restore_checkpoint(ckpt_manager)
+        if ckpt_data is not None:
+            print(f"Restored Orbax checkpoint at step {ckpt_step}", flush=True)
+        else:
+            # Fall back to legacy pickle
+            legacy_path = find_legacy_checkpoint(str(save_path))
+            if legacy_path:
+                ckpt_data = load_legacy_checkpoint(legacy_path)
                 if ckpt_data is not None:
-                    args.resume_from = alt_ckpt
-                    print(f"  OK: using {alt_ckpt}", flush=True)
-                    break
+                    print(f"Restored legacy checkpoint: {legacy_path}", flush=True)
             if ckpt_data is None:
                 print("No valid checkpoint found, starting from scratch", flush=True)
                 args.resume_from = ""
+
         if ckpt_data is not None:
             if isinstance(ckpt_data, dict) and 'actor_params' in ckpt_data:
-                # New format with metadata
                 alpha_params = ckpt_data['alpha_params']
                 actor_params = ckpt_data['actor_params']
                 critic_params = ckpt_data['critic_params']
-                start_epoch = ckpt_data['epoch'] + 1
-                ckpt_env_steps = ckpt_data['env_steps']
-                ckpt_gradient_steps = ckpt_data['gradient_steps']
+                start_epoch = ckpt_data.get('epoch', 0) + 1
+                ckpt_env_steps = ckpt_data.get('env_steps')
+                ckpt_gradient_steps = ckpt_data.get('gradient_steps')
             else:
-                # Old format (bare tuple)
+                # Old bare tuple format — no metadata
                 alpha_params, actor_params, critic_params = ckpt_data
                 ckpt_env_steps = None
                 ckpt_gradient_steps = None
 
-        if ckpt_data is not None:
             training_state = training_state.replace(
                 actor_state=training_state.actor_state.replace(params=actor_params),
                 critic_state=training_state.critic_state.replace(params=critic_params),
@@ -739,8 +695,9 @@ if __name__ == "__main__":
                     env_steps=jnp.array(ckpt_env_steps),
                     gradient_steps=jnp.array(ckpt_gradient_steps),
                 )
-                print(f"Restored counters: epoch={start_epoch}, env_steps={ckpt_env_steps}, gradient_steps={ckpt_gradient_steps}", flush=True)
-            print(f"Checkpoint loaded successfully, resuming from epoch {start_epoch}", flush=True)
+                print(f"Resuming from epoch {start_epoch}, env_steps={ckpt_env_steps}", flush=True)
+            else:
+                print(f"Resuming from epoch {start_epoch} (no step metadata in old checkpoint)", flush=True)
 
     #Replay Buffer
     dummy_obs = jnp.zeros((obs_size,))
@@ -1186,18 +1143,7 @@ if __name__ == "__main__":
 
         if args.checkpoint:
             if ne < 5 or ne >= args.num_epochs - 5 or ne % 10 == 0:
-                # Save checkpoint with metadata
-                ckpt = {
-                    'alpha_params': training_state.alpha_state.params,
-                    'actor_params': training_state.actor_state.params,
-                    'critic_params': training_state.critic_state.params,
-                    'epoch': ne,
-                    'env_steps': int(training_state.env_steps),
-                    'gradient_steps': int(training_state.gradient_steps),
-                }
-                path = f"{save_path}/step_{int(training_state.env_steps)}.pkl"
-                save_params_async(path, ckpt)
-                cleanup_old_checkpoints(str(save_path), keep=3)
+                save_checkpoint(ckpt_manager, training_state, ne)
         
         if args.track:
             wandb.log(metrics, step=ne)
@@ -1210,18 +1156,8 @@ if __name__ == "__main__":
 
     
     if args.checkpoint:
-        # Save final checkpoint with metadata
-        ckpt = {
-            'alpha_params': training_state.alpha_state.params,
-            'actor_params': training_state.actor_state.params,
-            'critic_params': training_state.critic_state.params,
-            'epoch': args.num_epochs - 1,
-            'env_steps': int(training_state.env_steps),
-            'gradient_steps': int(training_state.gradient_steps),
-        }
-        path = f"{save_path}/final.pkl"
-        save_params_async(path, ckpt)
-        cleanup_old_checkpoints(str(save_path), keep=3)
+        save_checkpoint(ckpt_manager, training_state, args.num_epochs - 1)
+        ckpt_manager.wait_until_finished()
         
     # After training is complete, render the final policy
     if args.capture_vis:

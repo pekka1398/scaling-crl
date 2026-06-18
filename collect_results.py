@@ -40,7 +40,17 @@ def parse_exp_name(name):
 
 
 def get_max_step(exp_dir):
-    """Get max env steps from step_*.pkl filenames."""
+    """Get max env steps from checkpoint filenames (Orbax dirs or legacy .pkl)."""
+    # Orbax: checkpoints/{step}/ directories
+    orbax_dir = exp_dir / "checkpoints"
+    if orbax_dir.is_dir():
+        steps = []
+        for d in orbax_dir.iterdir():
+            if d.is_dir() and d.name.isdigit():
+                steps.append(int(d.name))
+        if steps:
+            return max(steps)
+    # Legacy: step_*.pkl files
     ckpts = sorted(exp_dir.glob("step_*.pkl"),
                    key=lambda f: int(f.name.rsplit('_', 1)[-1].rsplit('.', 1)[0]))
     if ckpts:
@@ -53,7 +63,7 @@ def scan_experiment(exp_dir):
     name = exp_dir.name
     env, depth, seed = parse_exp_name(name)
 
-    has_final = (exp_dir / "final.pkl").exists()
+    has_final = (exp_dir / "final.pkl").exists() or (exp_dir / "checkpoints").is_dir()
     max_step = get_max_step(exp_dir)
     train_pct = max_step / TARGET_STEPS * 100 if max_step else 0
     # Flag experiments that crashed early (< 50% of target steps)
@@ -104,7 +114,7 @@ def main():
         return
 
     for d in sorted(RUNS_DIR.iterdir()):
-        if d.name == "_old" or not d.is_dir():
+        if d.name.startswith("_") or d.name.startswith(".") or not d.is_dir():
             continue
         results.append(scan_experiment(d))
 

@@ -24,7 +24,7 @@ import flax.linen as nn
 from brax import envs
 
 from evaluator import CrlEvaluator
-from train import Actor, Transition, load_params, Args, TrainingState
+from train import Actor, Transition, load_legacy_checkpoint, create_checkpoint_manager, restore_checkpoint, find_legacy_checkpoint, Args, TrainingState
 from flax.training.train_state import TrainState as FlaxTrainState
 # Make Args available as __main__.Args so pickle can find it
 import __main__
@@ -81,23 +81,18 @@ def make_env(env_id, episode_length=1000):
 def run_eval(exp_name=None, checkpoint=None, env_id=None, depth=None, seed=None,
              num_eval_envs=128, episode_length=1000):
     """Run evaluation on a checkpoint, return metrics dict."""
-    
-    # Resolve exp_name → checkpoint path
+
+    # Resolve exp_name → save_path
     if exp_name and not checkpoint:
         save_path = f"runs/{exp_name}"
-        checkpoint = os.path.join(save_path, "final.pkl")
-        if not os.path.exists(checkpoint):
-            import glob
-            ckpts = sorted(glob.glob(f"{save_path}/step_*.pkl"),
-                          key=lambda f: int(f.rsplit('_', 1)[-1].rsplit('.', 1)[0]))
-            if not ckpts:
-                print(f"ERROR: No checkpoint found in {save_path}")
-                return None
-            checkpoint = ckpts[-1]
-        print(f"Using checkpoint: {checkpoint}")
+    elif checkpoint:
+        save_path = os.path.dirname(checkpoint)
+    else:
+        print("ERROR: Must specify --exp_name or --checkpoint")
+        return None
 
     # Load args.pkl if available
-    args_path = os.path.join(os.path.dirname(checkpoint), "args.pkl")
+    args_path = os.path.join(save_path, "args.pkl")
     if os.path.exists(args_path):
         with open(args_path, 'rb') as f:
             ckpt_args = pickle.load(f)
@@ -120,20 +115,34 @@ def run_eval(exp_name=None, checkpoint=None, env_id=None, depth=None, seed=None,
         use_relu = 0
         print(f"WARNING: No args.pkl, using defaults")
 
-    # Load checkpoint
-    ckpt_data = load_params(checkpoint)
+    # Load checkpoint: try Orbax first, then legacy pickle
+    ckpt_data = None
+    if os.path.isdir(os.path.join(save_path, "checkpoints")):
+        manager = create_checkpoint_manager(save_path)
+        ckpt_data, step = restore_checkpoint(manager)
+        if ckpt_data is not None:
+            print(f"Loaded Orbax checkpoint at step {step}")
+
     if ckpt_data is None:
-        print(f"ERROR: Corrupt checkpoint: {checkpoint}")
+        # Fall back to legacy pickle
+        if checkpoint:
+            ckpt_data = load_legacy_checkpoint(checkpoint)
+        else:
+            legacy_path = find_legacy_checkpoint(save_path)
+            if legacy_path:
+                ckpt_data = load_legacy_checkpoint(legacy_path)
+                print(f"Loaded legacy checkpoint: {legacy_path}")
+
+    if ckpt_data is None:
+        print(f"ERROR: No valid checkpoint found in {save_path}")
         return None
 
     if isinstance(ckpt_data, dict) and 'actor_params' in ckpt_data:
         actor_params = ckpt_data['actor_params']
-        ckpt_epoch = ckpt_data.get('epoch', '?')
-        ckpt_steps = ckpt_data.get('env_steps', '?')
-        print(f"Checkpoint format: NEW (epoch={ckpt_epoch}, env_steps={ckpt_steps})")
+        print(f"Checkpoint: epoch={ckpt_data.get('epoch','?')}, env_steps={ckpt_data.get('env_steps','?')}")
     elif isinstance(ckpt_data, tuple):
         _, actor_params, _ = ckpt_data
-        print("Checkpoint format: OLD (bare tuple)")
+        print("Checkpoint: OLD format (bare tuple)")
     else:
         print(f"ERROR: Unknown checkpoint format: {type(ckpt_data)}")
         return None
@@ -206,13 +215,16 @@ def run_eval(exp_name=None, checkpoint=None, env_id=None, depth=None, seed=None,
 
 
 def eval_all(force=False):
-    """Eval all experiments with final.pkl in runs/."""
+    """Eval all experiments with checkpoints in runs/."""
     results = []
     skipped = 0
     for d in sorted(os.listdir("runs")):
-        if d == "_old":
+        if d.startswith("_") or d.startswith("."):
             continue
-        if not os.path.exists(f"runs/{d}/final.pkl"):
+        # Check for Orbax checkpoints dir or legacy final.pkl
+        has_ckpt = (os.path.isdir(f"runs/{d}/checkpoints") or
+                    os.path.exists(f"runs/{d}/final.pkl"))
+        if not has_ckpt:
             continue
         if not force and os.path.exists(f"runs/{d}/eval_metrics.json"):
             skipped += 1
