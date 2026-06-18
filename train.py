@@ -16,18 +16,20 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 import optax
+import flax
 import flax.linen as nn
 import tyro
 import wandb
 
 from dataclasses import dataclass
-from typing import NamedTuple, Any
+from typing import Any
 from pathlib import Path
 
 from brax import envs
 from flax.training.train_state import TrainState
 
 from crl.networks import Actor, SA_encoder, G_encoder
+from crl.types import Transition
 from crl.buffer import TrajectoryUniformSamplingQueue
 from crl.algorithm import (
     make_actor_step, make_get_experience, make_update_actor,
@@ -78,8 +80,6 @@ class Args:
     critic_network_width: int = 256
     actor_depth: int = 4
     critic_depth: int = 4
-    actor_skip_connections: int = 4
-    critic_skip_connections: int = 4
     use_relu: int = 0
 
     # === Optimizer ===
@@ -120,23 +120,18 @@ class TrainingState:
     alpha_state: TrainState
 
 
-class Transition(NamedTuple):
-    observation: jnp.ndarray
-    action: jnp.ndarray
-    reward: jnp.ndarray
-    discount: jnp.ndarray
-    extras: jnp.ndarray = ()
-
-
 def main():
     args = tyro.cli(Args)
 
-    # --- Compute derived values ---
+    # --- Compute derived values (set on args so crl/algorithm.py can access via closure) ---
     args.eval_env_id = args.eval_env_id or args.env_id
-    env_steps_per_actor_step = args.num_envs * args.unroll_length
-    num_prefill_env_steps = args.min_replay_size * args.num_envs
-    num_prefill_actor_steps = int(np.ceil(args.min_replay_size / args.unroll_length))
-    num_training_steps_per_epoch = (args.total_env_steps - num_prefill_env_steps) // (args.num_epochs * env_steps_per_actor_step)
+    args.env_steps_per_actor_step = args.num_envs * args.unroll_length
+    args.num_prefill_env_steps = args.min_replay_size * args.num_envs
+    args.num_prefill_actor_steps = int(np.ceil(args.min_replay_size / args.unroll_length))
+    args.num_training_steps_per_epoch = (args.total_env_steps - args.num_prefill_env_steps) // (args.num_epochs * args.env_steps_per_actor_step)
+    env_steps_per_actor_step = args.env_steps_per_actor_step
+    num_prefill_actor_steps = args.num_prefill_actor_steps
+    num_training_steps_per_epoch = args.num_training_steps_per_epoch
 
     # --- Env ---
     env, env_info = make_env(args.env_id)
@@ -176,16 +171,15 @@ def main():
     random.seed(args.seed)
     np.random.seed(args.seed)
     key = jax.random.PRNGKey(args.seed)
-    key, buffer_key, env_key, eval_env_key, actor_key, sa_key, g_key = jax.random.split(key, 7)
+    key, buffer_key, env_key, eval_env_key, actor_key, sa_key, g_key, eval_actor_key = jax.random.split(key, 8)
 
     # --- Networks ---
     actor = Actor(action_size=action_size, network_width=args.actor_network_width,
-                  network_depth=args.actor_depth, skip_connections=args.actor_skip_connections,
-                  use_relu=args.use_relu)
+                  network_depth=args.actor_depth, use_relu=args.use_relu)
     sa_encoder = SA_encoder(network_width=args.critic_network_width, network_depth=args.critic_depth,
-                            skip_connections=args.critic_skip_connections, use_relu=args.use_relu)
+                            use_relu=args.use_relu)
     g_encoder = G_encoder(network_width=args.critic_network_width, network_depth=args.critic_depth,
-                          skip_connections=args.critic_skip_connections, use_relu=args.use_relu)
+                          use_relu=args.use_relu)
 
     actor_state = TrainState.create(
         apply_fn=actor.apply,
@@ -285,7 +279,7 @@ def main():
         t = time.time()
         key, epoch_key = jax.random.split(key)
         training_state, env_state, buffer_state, metrics = training_epoch(
-            training_state, env_state, buffer_state, epoch_key, env)
+            training_state, env_state, buffer_state, epoch_key)
 
         metrics = jax.tree_util.tree_map(jnp.mean, metrics)
         metrics = jax.tree_util.tree_map(lambda x: x.block_until_ready(), metrics)

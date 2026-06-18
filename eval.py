@@ -25,7 +25,6 @@ from brax import envs
 
 from evaluator import CrlEvaluator
 from crl.networks import Actor
-from crl.algorithm import make_actor_step
 from utils.env_factory import make_env, wrap_env
 from utils.checkpoint import (
     load_legacy_checkpoint, create_checkpoint_manager, restore_checkpoint,

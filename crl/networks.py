@@ -34,7 +34,6 @@ class SA_encoder(nn.Module):
     """State-Action encoder for the critic."""
     network_width: int = 256
     network_depth: int = 4
-    skip_connections: int = 0
     use_relu: int = 0
 
     @nn.compact
@@ -60,7 +59,6 @@ class G_encoder(nn.Module):
     """Goal encoder for the critic."""
     network_width: int = 256
     network_depth: int = 4
-    skip_connections: int = 0
     use_relu: int = 0
 
     @nn.compact
@@ -88,7 +86,6 @@ class Actor(nn.Module):
     norm_type: str = "layer_norm"
     network_width: int = 1024
     network_depth: int = 4
-    skip_connections: int = 0
     use_relu: int = 0
     LOG_STD_MAX = 2
     LOG_STD_MIN = -5

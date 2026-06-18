@@ -297,8 +297,8 @@ def make_training_epoch(training_step, replay_buffer, args):
     return training_epoch
 
 
-def setup_evaluator(actor, sa_encoder, g_encoder, eval_env, obs_dim, args, eval_env_key):
-    """Setup evaluator. eval_env captured via closure in actor steps."""
+def setup_evaluator(actor, sa_encoder, g_encoder, eval_env, obs_dim, eval_actor_key, args, eval_env_key):
+    """Setup evaluator. eval_env and eval_actor_key captured via closure in actor steps."""
 
     if args.eval_actor == 0:
         step_fn = make_actor_step(actor, eval_env, mode="deterministic")
@@ -308,9 +308,10 @@ def setup_evaluator(actor, sa_encoder, g_encoder, eval_env, obs_dim, args, eval_
             episode_length=args.episode_length, key=eval_env_key)
 
     elif args.eval_actor == 1:
-        _key = [jax.random.PRNGKey(0)]  # mutable container for key updates
+        # Use eval_actor_key (derived from main key) for reproducibility
+        # fold_in with env_steps so different epochs get different keys
         def eval_step(ts, env, es, extra_fields):
-            _key[0], k = jax.random.split(_key[0])
+            k = jax.random.fold_in(eval_actor_key, ts.env_steps)
             means, log_stds = actor.apply(ts.actor_state.params, es.obs)
             stds = jnp.exp(log_stds)
             actions = nn.tanh(means + stds * jax.random.normal(k, shape=means.shape, dtype=means.dtype))
@@ -328,8 +329,9 @@ def setup_evaluator(actor, sa_encoder, g_encoder, eval_env, obs_dim, args, eval_
         multi_step = make_multi_sample_actor_step(
             actor, sa_encoder, g_encoder, eval_env,
             obs_dim, args.goal_start_idx, args.goal_end_idx, K)
+        _eval_actor_key = eval_actor_key
         def eval_step(ts, env, es, extra_fields):
-            key = jax.random.fold_in(jax.random.PRNGKey(0), ts.env_steps)
+            key = jax.random.fold_in(_eval_actor_key, ts.env_steps)
             nstate, transition = multi_step(ts, es, key, extra_fields)
             return nstate, transition
         return CrlEvaluator(eval_step, eval_env, num_eval_envs=args.num_eval_envs,

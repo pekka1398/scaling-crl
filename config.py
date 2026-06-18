@@ -20,8 +20,6 @@ class Experiment:
     total_env_steps: int = 100_000_000
 
     # === Network architecture ===
-    actor_skip_connections: int = 4
-    critic_skip_connections: int = 4
     actor_network_width: int = 256
     critic_network_width: int = 256
     batch_size: int = 512
@@ -58,8 +56,6 @@ class Experiment:
             "--seed", str(self.seed),
             "--actor_depth", str(self.depth),
             "--critic_depth", str(self.depth),
-            "--actor_skip_connections", str(self.actor_skip_connections),
-            "--critic_skip_connections", str(self.critic_skip_connections),
             "--actor_network_width", str(self.actor_network_width),
             "--critic_network_width", str(self.critic_network_width),
             "--batch_size", str(self.batch_size),
