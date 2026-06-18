@@ -101,7 +101,7 @@ def build_batch_script(exps, partition="8gpus", stealth=True, mem="200G"):
         "",
         'NVIDIA_LIBS=$(find .venv -path "*/nvidia/*/lib" -type d | tr "\\n" ":")',
         "export LD_LIBRARY_PATH=${NVIDIA_LIBS}${LD_LIBRARY_PATH}",
-        "export WANDB_MODE=offline",
+        "export WANDB_MODE=online",
         "export XLA_PYTHON_CLIENT_PREALLOCATE=false",
         "export XLA_PYTHON_CLIENT_ALLOCATOR=platform",
         "export JAX_COMPILATION_CACHE_DIR=/home/u2169145/.cache/jax",
