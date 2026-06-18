@@ -21,51 +21,15 @@ import numpy as np
 from brax import envs
 from brax.io import html
 
-from train import Actor, load_legacy_checkpoint, create_checkpoint_manager, restore_checkpoint, find_legacy_checkpoint, Args
+from crl.networks import Actor
+from utils.env_factory import make_env, wrap_env
+from utils.checkpoint import (
+    load_legacy_checkpoint, create_checkpoint_manager, restore_checkpoint,
+    find_legacy_checkpoint, CheckpointConfig,
+)
+from train import Args
 import __main__
 __main__.Args = Args
-
-
-def make_env_raw(env_id):
-    """Create an unwrapped env (for rendering sys + single-env reset)."""
-    if env_id == "ant":
-        from envs.ant import Ant
-        return Ant(backend="spring", exclude_current_positions_from_observation=False, terminate_when_unhealthy=True)
-    elif "ant" in env_id and "maze" in env_id:
-        from envs.ant_maze import AntMaze
-        return AntMaze(backend="spring", exclude_current_positions_from_observation=False, terminate_when_unhealthy=True, maze_layout_name=env_id[4:])
-    elif env_id == "ant_ball":
-        from envs.ant_ball import AntBall
-        return AntBall(backend="spring", exclude_current_positions_from_observation=False, terminate_when_unhealthy=True)
-    elif env_id == "ant_push":
-        from envs.ant_push import AntPush
-        return AntPush(backend="mjx")
-    elif env_id == "humanoid":
-        from envs.humanoid import Humanoid
-        return Humanoid(backend="spring", exclude_current_positions_from_observation=False, terminate_when_unhealthy=True)
-    elif "humanoid" in env_id and "maze" in env_id:
-        from envs.humanoid_maze import HumanoidMaze
-        return HumanoidMaze(backend="spring", maze_layout_name=env_id[9:])
-    elif env_id == "arm_reach":
-        from envs.manipulation.arm_reach import ArmReach
-        return ArmReach(backend="mjx")
-    elif env_id == "arm_grasp":
-        from envs.manipulation.arm_grasp import ArmGrasp
-        return ArmGrasp(cube_noise_scale=0.3, backend="mjx")
-    elif env_id == "arm_push_easy":
-        from envs.manipulation.arm_push_easy import ArmPushEasy
-        return ArmPushEasy(backend="mjx")
-    elif env_id == "arm_push_hard":
-        from envs.manipulation.arm_push_hard import ArmPushHard
-        return ArmPushHard(backend="mjx")
-    elif env_id == "arm_binpick_easy":
-        from envs.manipulation.arm_binpick_easy import ArmBinpickEasy
-        return ArmBinpickEasy(backend="mjx")
-    elif env_id == "arm_binpick_hard":
-        from envs.manipulation.arm_binpick_hard import ArmBinpickHard
-        return ArmBinpickHard(backend="mjx")
-    else:
-        raise NotImplementedError(f"Unknown env_id: {env_id}")
 
 
 def load_actor(exp_name, checkpoint=None):
@@ -88,7 +52,8 @@ def load_actor(exp_name, checkpoint=None):
     # Load checkpoint: try Orbax first, then legacy pickle
     ckpt_data = None
     if os.path.isdir(os.path.join(save_path, "checkpoints")):
-        manager = create_checkpoint_manager(save_path)
+        render_ckpt_config = CheckpointConfig(save_interval_epochs=10, max_to_keep=3, keep_period=50)
+        manager = create_checkpoint_manager(save_path, render_ckpt_config)
         ckpt_data, step = restore_checkpoint(manager)
         if ckpt_data is not None:
             print(f"Loaded Orbax checkpoint at step {step}")
@@ -113,7 +78,7 @@ def load_actor(exp_name, checkpoint=None):
         raise RuntimeError(f"Unknown checkpoint format: {type(ckpt_data)}")
 
     # Create env to get action_size
-    raw_env = make_env_raw(env_id)
+    raw_env, _ = make_env(env_id)
     action_size = raw_env.action_size
 
     actor = Actor(action_size=action_size, network_width=actor_width,

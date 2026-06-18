@@ -24,58 +24,18 @@ import flax.linen as nn
 from brax import envs
 
 from evaluator import CrlEvaluator
-from train import Actor, Transition, load_legacy_checkpoint, create_checkpoint_manager, restore_checkpoint, find_legacy_checkpoint, Args, TrainingState
+from crl.networks import Actor
+from crl.algorithm import make_actor_step
+from utils.env_factory import make_env, wrap_env
+from utils.checkpoint import (
+    load_legacy_checkpoint, create_checkpoint_manager, restore_checkpoint,
+    find_legacy_checkpoint, CheckpointConfig,
+)
+from train import Args, TrainingState, Transition
 from flax.training.train_state import TrainState as FlaxTrainState
-# Make Args available as __main__.Args so pickle can find it
 import __main__
 __main__.Args = Args
 
-
-# ─── Environment creation (mirrors train.py make_env) ───
-def make_env(env_id, episode_length=1000):
-    """Create environment by env_id. Returns (env, action_size)."""
-    if env_id == "ant":
-        from envs.ant import Ant
-        env = Ant(backend="spring", exclude_current_positions_from_observation=False, terminate_when_unhealthy=True)
-    elif "ant" in env_id and "maze" in env_id:
-        from envs.ant_maze import AntMaze
-        env = AntMaze(backend="spring", exclude_current_positions_from_observation=False, terminate_when_unhealthy=True, maze_layout_name=env_id[4:])
-    elif env_id == "ant_ball":
-        from envs.ant_ball import AntBall
-        env = AntBall(backend="spring", exclude_current_positions_from_observation=False, terminate_when_unhealthy=True)
-    elif env_id == "ant_push":
-        from envs.ant_push import AntPush
-        env = AntPush(backend="mjx")
-    elif env_id == "humanoid":
-        from envs.humanoid import Humanoid
-        env = Humanoid(backend="spring", exclude_current_positions_from_observation=False, terminate_when_unhealthy=True)
-    elif "humanoid" in env_id and "maze" in env_id:
-        from envs.humanoid_maze import HumanoidMaze
-        env = HumanoidMaze(backend="spring", maze_layout_name=env_id[9:])
-    elif env_id == "arm_reach":
-        from envs.manipulation.arm_reach import ArmReach
-        env = ArmReach(backend="mjx")
-    elif env_id == "arm_grasp":
-        from envs.manipulation.arm_grasp import ArmGrasp
-        env = ArmGrasp(cube_noise_scale=0.3, backend="mjx")
-    elif env_id == "arm_push_easy":
-        from envs.manipulation.arm_push_easy import ArmPushEasy
-        env = ArmPushEasy(backend="mjx")
-    elif env_id == "arm_push_hard":
-        from envs.manipulation.arm_push_hard import ArmPushHard
-        env = ArmPushHard(backend="mjx")
-    elif env_id == "arm_binpick_easy":
-        from envs.manipulation.arm_binpick_easy import ArmBinpickEasy
-        env = ArmBinpickEasy(backend="mjx")
-    elif env_id == "arm_binpick_hard":
-        from envs.manipulation.arm_binpick_hard import ArmBinpickHard
-        env = ArmBinpickHard(backend="mjx")
-    else:
-        raise NotImplementedError(f"Unknown env_id: {env_id}")
-
-    env = envs.training.wrap(env, episode_length=episode_length)
-    action_size = env.action_size
-    return env, action_size
 
 
 def run_eval(exp_name=None, checkpoint=None, env_id=None, depth=None, seed=None,
@@ -118,7 +78,9 @@ def run_eval(exp_name=None, checkpoint=None, env_id=None, depth=None, seed=None,
     # Load checkpoint: try Orbax first, then legacy pickle
     ckpt_data = None
     if os.path.isdir(os.path.join(save_path, "checkpoints")):
-        manager = create_checkpoint_manager(save_path)
+        # Use default config for eval — only need to read, not write
+        eval_ckpt_config = CheckpointConfig(save_interval_epochs=10, max_to_keep=3, keep_period=50)
+        manager = create_checkpoint_manager(save_path, eval_ckpt_config)
         ckpt_data, step = restore_checkpoint(manager)
         if ckpt_data is not None:
             print(f"Loaded Orbax checkpoint at step {step}")
@@ -148,7 +110,9 @@ def run_eval(exp_name=None, checkpoint=None, env_id=None, depth=None, seed=None,
         return None
 
     # Create env
-    env, action_size = make_env(env_id, episode_length)
+    env_raw, env_info = make_env(env_id)
+    env = wrap_env(env_raw, episode_length=episode_length)
+    action_size = env.action_size
 
     # Create actor
     actor = Actor(action_size=action_size, network_width=actor_width,
