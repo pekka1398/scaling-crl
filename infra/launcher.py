@@ -161,7 +161,7 @@ def build_batch_script(exps, partition="8gpus", stealth=True, mem="200G"):
             " --actor_skip_connections " + str(e.actor_skip_connections) +
             " --critic_skip_connections " + str(e.critic_skip_connections) +
             " --no-capture-vis"
-            " --wandb_mode offline"
+            " --wandb_mode online"
             " --wandb_group " + e.exp_name
         )
         if e.resume_from:
