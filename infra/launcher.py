@@ -91,6 +91,8 @@ def build_batch_script(exps, partition="8gpus", stealth=True, mem="200G"):
         "#SBATCH --cpus-per-task=1",
         "#SBATCH --mem=" + mem,
         "#SBATCH --time=48:00:00",
+        "#SBATCH --output=" + LOGDIR + "/slurm-%j.out",
+        "#SBATCH --error=" + LOGDIR + "/slurm-%j.err",
         "",
         "cd /home/u2169145/code/scaling-crl",
         "",
