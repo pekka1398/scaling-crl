@@ -10,3 +10,12 @@ _old/
 slurm-*.out
 infra/snapshots/
 infra/wandb_*.log
+# Reference repos (cloned for study, not part of project)
+/Stoix/
+/tianshou/
+/purejaxrl/
+/jaxrl/
+/rlax/
+/Mava/
+/acme/
+/dopamine/
