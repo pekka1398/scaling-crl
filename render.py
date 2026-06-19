@@ -44,8 +44,10 @@ def load_actor(exp_name, checkpoint=None):
         env_id = _get("env_id")
         depth = _get("depth") or _get("actor_depth")
         seed = _get("seed")
-        actor_width = _get("actor_network_width", 256)
+        actor_width = _get("actor_network_width")
         use_relu = _get("use_relu", 0)
+        if actor_width is None:
+            raise RuntimeError("actor_network_width not found in args.pkl")
     else:
         raise RuntimeError("args.pkl required to infer model architecture")
 

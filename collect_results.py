@@ -54,9 +54,9 @@ def run_to_row(run):
     target = cfg.get("total_env_steps", 100_000_000)
     train_pct = (envsteps / target * 100) if target and envsteps else 0
 
-    # Determine status from run state + training progress
+    # Determine status from WandB run state (primary) + training progress (secondary)
     state = run.state  # "finished", "crashed", "running", "failed"
-    if state == "finished" and train_pct >= 50:
+    if state == "finished":
         status = "DONE"
     elif state in ("crashed", "failed"):
         status = "CRASHED"

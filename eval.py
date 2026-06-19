@@ -62,16 +62,18 @@ def run_eval(exp_name=None, checkpoint=None, env_id=None, depth=None, seed=None,
             depth = _get("depth") or _get("actor_depth")
         if seed is None:
             seed = _get("seed")
-        actor_width = _get("actor_network_width", 256)
+        actor_width = _get("actor_network_width")
         use_relu = _get("use_relu", 0)
-        print(f"Loaded args: env_id={env_id}, depth={depth}, seed={seed}")
+        if actor_width is None:
+            print("ERROR: actor_network_width not found in args.pkl")
+            return None
+        print(f"Loaded args: env_id={env_id}, depth={depth}, seed={seed}, width={actor_width}")
     else:
         if env_id is None or depth is None:
             print("ERROR: Must specify --env_id and --depth when no args.pkl found")
             return None
-        actor_width = 256
-        use_relu = 0
-        print(f"WARNING: No args.pkl, using defaults")
+        print("ERROR: No args.pkl found — cannot determine actor_network_width")
+        return None
 
     # Load checkpoint: try Orbax first, then legacy pickle
     ckpt_data = None
