@@ -23,7 +23,7 @@ import flax.linen as nn
 import wandb
 
 from pathlib import Path
-from omegaconf import OmegaConf, DictConfig, read_write
+from omegaconf import OmegaConf, DictConfig
 from hydra import compose, initialize_config_dir
 from hydra.core.global_hydra import GlobalHydra
 
@@ -76,27 +76,27 @@ def load_experiment_config(experiment: str) -> DictConfig:
     schema = OmegaConf.structured(ExperimentConfig)
     cfg = OmegaConf.merge(schema, raw_cfg)
 
-    # Check for any MISSING fields
+    # Check for any MISSING fields ("???" = OmegaConf sentinel for MISSING)
     missing = []
     for key in OmegaConf.to_container(schema, resolve=False):
         val = OmegaConf.select(cfg, key)
-        if val is None or val == "???":
+        if val == "???":
             missing.append(key)
     if missing:
         raise ValueError(f"Experiment '{experiment}' missing required fields: {missing}")
 
-    return cfg
+    # Convert to mutable container (allows adding derived fields like obs_dim)
+    return OmegaConf.create(OmegaConf.to_container(cfg, resolve=True))
 
 
 def apply_compile_check_overrides(cfg: DictConfig) -> DictConfig:
     """Apply compile check overrides (1 epoch, 1M steps, no checkpoint/track)."""
-    with read_write(cfg):
-        cfg.exp_name = "compile_" + cfg.exp_name
-        cfg.num_epochs = 1
-        cfg.total_env_steps = 1_000_000
-        cfg.checkpoint = False
-        cfg.track = False
-        cfg.wandb_mode = "offline"
+    cfg.exp_name = "compile_" + cfg.exp_name
+    cfg.num_epochs = 1
+    cfg.total_env_steps = 1_000_000
+    cfg.checkpoint = False
+    cfg.track = False
+    cfg.wandb_mode = "offline"
     return cfg
 
 
@@ -120,13 +120,12 @@ def main():
         cfg = apply_compile_check_overrides(cfg)
 
     # --- Compute derived values (write to config for downstream use) ---
-    with read_write(cfg):
-        if cfg.eval_env_id is None:
-            cfg.eval_env_id = cfg.env_id
-        cfg.env_steps_per_actor_step = cfg.num_envs * cfg.unroll_length
-        cfg.num_prefill_env_steps = cfg.min_replay_size * cfg.num_envs
-        cfg.num_prefill_actor_steps = int(np.ceil(cfg.min_replay_size / cfg.unroll_length))
-        cfg.num_training_steps_per_epoch = (cfg.total_env_steps - cfg.num_prefill_env_steps) // (cfg.num_epochs * cfg.env_steps_per_actor_step)
+    if cfg.eval_env_id is None:
+        cfg.eval_env_id = cfg.env_id
+    cfg.env_steps_per_actor_step = cfg.num_envs * cfg.unroll_length
+    cfg.num_prefill_env_steps = cfg.min_replay_size * cfg.num_envs
+    cfg.num_prefill_actor_steps = int(np.ceil(cfg.min_replay_size / cfg.unroll_length))
+    cfg.num_training_steps_per_epoch = (cfg.total_env_steps - cfg.num_prefill_env_steps) // (cfg.num_epochs * cfg.env_steps_per_actor_step)
 
     # --- Env ---
     env, env_info = make_env(cfg.env_id)
@@ -137,10 +136,9 @@ def main():
     eval_env, _ = make_env(cfg.eval_env_id)
     eval_env = wrap_env(eval_env, episode_length=cfg.episode_length)
 
-    with read_write(cfg):
-        cfg.obs_dim = env_info.obs_dim
-        cfg.goal_start_idx = env_info.goal_start_idx
-        cfg.goal_end_idx = env_info.goal_end_idx
+    cfg.obs_dim = env_info.obs_dim
+    cfg.goal_start_idx = env_info.goal_start_idx
+    cfg.goal_end_idx = env_info.goal_end_idx
 
     # --- Checkpoint/Wandb paths ---
     save_path = None

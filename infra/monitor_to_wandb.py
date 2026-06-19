@@ -16,7 +16,11 @@ import time
 import os
 import sys
 
+# Add project root to path for utils.wandb_defaults
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+
+import wandb
+from utils.wandb_defaults import DEFAULT_ENTITY, DEFAULT_PROJECT
 
 
 def run(cmd):
@@ -112,13 +116,10 @@ def collect_and_log():
 def main():
     parser = argparse.ArgumentParser(description="Push SLURM status to WandB")
     parser.add_argument("--loop", type=int, default=0, help="Refresh every N seconds (0=one-shot)")
-    from utils.wandb_defaults import DEFAULT_ENTITY, DEFAULT_PROJECT
     parser.add_argument("--project", default=DEFAULT_PROJECT, help="WandB project")
     parser.add_argument("--entity", default=DEFAULT_ENTITY)
     parser.add_argument("--interval", type=int, default=60, help="Log interval in seconds (with --loop)")
     args = parser.parse_args()
-
-    import wandb
 
     run_obj = wandb.init(
         project=args.project,
@@ -131,7 +132,7 @@ def main():
 
     if args.loop > 0:
         print(f"Monitoring SLURM → WandB (every {args.interval}s). Ctrl+C to stop.")
-        step = 0
+        step = run_obj.step or 0
         while True:
             try:
                 metrics = collect_and_log()
