@@ -17,14 +17,12 @@ Usage:
 import argparse
 import csv
 import json
+import os
 import sys
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__))))
 import wandb
-
-
-# Default project — matches train.py / utils/logging.py
-DEFAULT_ENTITY = "sungwayne99999-national-cheng-kung-university-co-op"
-DEFAULT_PROJECT = "scaling-crl-v2"
+from utils.wandb_defaults import DEFAULT_ENTITY, DEFAULT_PROJECT
 
 # Metrics to pull from each run's summary
 METRIC_KEYS = [

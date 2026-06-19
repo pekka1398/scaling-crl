@@ -6,7 +6,7 @@ from omegaconf import DictConfig, OmegaConf
 
 
 def setup_wandb(cfg, resume_id=None):
-    """Initialize wandb. Returns (trigger_sync, run).
+    """Initialize wandb. Returns (_, run).
 
     Args:
         cfg: OmegaConf DictConfig, dict, or SimpleNamespace

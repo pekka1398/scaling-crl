@@ -1,5 +1,5 @@
 # Checkpointing — shared across all experiments
-resume_from: auto
+resume_from: true
 checkpoint: true
 checkpoint_save_interval_epochs: 10
 checkpoint_max_to_keep: 3

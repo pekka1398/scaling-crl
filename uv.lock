@@ -164,18 +164,6 @@ wheels = [
 ]
 
 [[package]]
-name = "colorlog"
-version = "6.10.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "colorama", marker = "sys_platform == 'win32'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/a2/61/f083b5ac52e505dfc1c624eafbf8c7589a0d7f32daa398d2e7590efa5fda/colorlog-6.10.1.tar.gz", hash = "sha256:eb4ae5cb65fe7fec7773c2306061a8e63e02efc2c72eba9d27b0fa23c94f1321", size = 17162, upload-time = "2025-10-16T16:14:11.978Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/6d/c1/e419ef3723a074172b68aaa89c9f3de486ed4c2399e2dbd8113a4fdcaf9e/colorlog-6.10.1-py3-none-any.whl", hash = "sha256:2d7e8348291948af66122cff006c9f8da6255d224e7cf8e37d8de2df3bad8c9c", size = 11743, upload-time = "2025-10-16T16:14:10.512Z" },
-]
-
-[[package]]
 name = "contourpy"
 version = "1.3.2"
 source = { registry = "https://pypi.org/simple" }
@@ -1302,7 +1290,6 @@ dependencies = [
     { name = "scipy" },
     { name = "submitit" },
     { name = "wandb" },
-    { name = "wandb-osh" },
 ]
 
 [package.metadata]
@@ -1322,7 +1309,6 @@ requires-dist = [
     { name = "scipy", specifier = "==1.12.0" },
     { name = "submitit", specifier = ">=1.5.4" },
     { name = "wandb", specifier = "==0.17.9" },
-    { name = "wandb-osh", specifier = "==1.2.2" },
 ]
 
 [[package]]
@@ -1535,19 +1521,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/10/65/940e2f0cdaaf818ea14d47fcc5e9f05a7e98f9052295e1bf525e393b3743/wandb-0.17.9-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:c1cbb833987e8fd9754e94cbb18bb0564b01bc9c743b67d499700192de0bd154", size = 9425254, upload-time = "2024-09-05T20:46:02.605Z" },
     { url = "https://files.pythonhosted.org/packages/25/3b/464f8001b330e7d037f66d4f63de691d6ab83c86765ddb3d9523cd7d399d/wandb-0.17.9-py3-none-win32.whl", hash = "sha256:a6b83dba8199923ce44da6360a174df6eb8430dc6912e29afb60ad882a4f2c18", size = 6550874, upload-time = "2024-09-05T20:46:06.382Z" },
     { url = "https://files.pythonhosted.org/packages/01/8f/6adbbe9727dbd400eea6ac388aa52b928f7b5fbceba433fbd28770601aa2/wandb-0.17.9-py3-none-win_amd64.whl", hash = "sha256:c5dad3d8650ccc84323d86f211cd2af9a66e7ed23dc62c8a897fcb0f4337a394", size = 6550876, upload-time = "2024-09-05T20:46:08.201Z" },
-]
-
-[[package]]
-name = "wandb-osh"
-version = "1.2.2"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "colorlog" },
-    { name = "wandb" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/c4/48/56692264ae6e00d249cd7e0c43eadf0ed70abf01b623ce9594671879e3b3/wandb_osh-1.2.2.tar.gz", hash = "sha256:e0b0455483e7c7ad1c9f784454860798ad680544291b9271fa2b657a00232ab1", size = 17285, upload-time = "2024-03-21T19:43:20.706Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/b8/2c/fd0193f57e2cc3d7f0a1fd57128b18279d5993b657c30e5b6a3378189a4c/wandb_osh-1.2.2-py3-none-any.whl", hash = "sha256:50634ac1984332e0ecbad44b865ace2e3e6ad0a5804432d284b62102f238c37c", size = 13059, upload-time = "2024-03-21T19:43:17.61Z" },
 ]
 
 [[package]]

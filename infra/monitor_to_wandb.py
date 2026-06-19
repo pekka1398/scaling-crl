@@ -112,8 +112,9 @@ def collect_and_log():
 def main():
     parser = argparse.ArgumentParser(description="Push SLURM status to WandB")
     parser.add_argument("--loop", type=int, default=0, help="Refresh every N seconds (0=one-shot)")
-    parser.add_argument("--project", default="scaling-crl-v2", help="WandB project")
-    parser.add_argument("--entity", default="sungwayne99999-national-cheng-kung-university-co-op")
+    from utils.wandb_defaults import DEFAULT_ENTITY, DEFAULT_PROJECT
+    parser.add_argument("--project", default=DEFAULT_PROJECT, help="WandB project")
+    parser.add_argument("--entity", default=DEFAULT_ENTITY)
     parser.add_argument("--interval", type=int, default=60, help="Log interval in seconds (with --loop)")
     args = parser.parse_args()
 

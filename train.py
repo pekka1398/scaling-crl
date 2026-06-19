@@ -119,13 +119,14 @@ def main():
     if known.compile_check:
         cfg = apply_compile_check_overrides(cfg)
 
-    # --- Compute derived values ---
-    if cfg.eval_env_id is None:
-        cfg.eval_env_id = cfg.env_id
-    cfg.env_steps_per_actor_step = cfg.num_envs * cfg.unroll_length
-    cfg.num_prefill_env_steps = cfg.min_replay_size * cfg.num_envs
-    cfg.num_prefill_actor_steps = int(np.ceil(cfg.min_replay_size / cfg.unroll_length))
-    cfg.num_training_steps_per_epoch = (cfg.total_env_steps - cfg.num_prefill_env_steps) // (cfg.num_epochs * cfg.env_steps_per_actor_step)
+    # --- Compute derived values (write to config for downstream use) ---
+    with read_write(cfg):
+        if cfg.eval_env_id is None:
+            cfg.eval_env_id = cfg.env_id
+        cfg.env_steps_per_actor_step = cfg.num_envs * cfg.unroll_length
+        cfg.num_prefill_env_steps = cfg.min_replay_size * cfg.num_envs
+        cfg.num_prefill_actor_steps = int(np.ceil(cfg.min_replay_size / cfg.unroll_length))
+        cfg.num_training_steps_per_epoch = (cfg.total_env_steps - cfg.num_prefill_env_steps) // (cfg.num_epochs * cfg.env_steps_per_actor_step)
 
     # --- Env ---
     env, env_info = make_env(cfg.env_id)
@@ -136,9 +137,10 @@ def main():
     eval_env, _ = make_env(cfg.eval_env_id)
     eval_env = wrap_env(eval_env, episode_length=cfg.episode_length)
 
-    cfg.obs_dim = env_info.obs_dim
-    cfg.goal_start_idx = env_info.goal_start_idx
-    cfg.goal_end_idx = env_info.goal_end_idx
+    with read_write(cfg):
+        cfg.obs_dim = env_info.obs_dim
+        cfg.goal_start_idx = env_info.goal_start_idx
+        cfg.goal_end_idx = env_info.goal_end_idx
 
     # --- Checkpoint/Wandb paths ---
     save_path = None
