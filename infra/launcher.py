@@ -62,6 +62,7 @@ def pack_jobs(experiments, gpus_per_node=8):
 def build_batch_script(exps, partition="8gpus", stealth=True, mem="200G"):
     n = len(exps)
     jn = random.choice(STEALTH) if stealth else "batch_" + str(n)
+    group = datetime.now().strftime("job_%Y%m%d_%H%M%S")
     lines = [
         "#!/bin/bash",
         "#SBATCH --account=MST114560",
@@ -131,6 +132,7 @@ def build_batch_script(exps, partition="8gpus", stealth=True, mem="200G"):
         cmd = (
             f"CUDA_VISIBLE_DEVICES=${{GPUS[{i}]}} $P train.py"
             f" --experiment {exp_name}"
+            f" wandb_group={group}"
             f" > {LOGDIR}/{exp_name}.log 2>&1 &"
         )
         lines.append(cmd)
