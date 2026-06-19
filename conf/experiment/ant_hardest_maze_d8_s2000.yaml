@@ -1,0 +1,20 @@
+# @package _global_
+# Experiment: ant_hardest_maze_d8_s2000
+
+defaults:
+  - /network
+  - /optimizer
+  - /replay
+  - /rl
+  - /eval
+  - /wandb
+  - /checkpoint
+  - _self_
+
+exp_name: ant_hardest_maze_d8_s2000
+env_id: ant_hardest_maze
+depth: 8
+seed: 2000
+num_epochs: 200
+
+total_env_steps: 200000000

@@ -1,0 +1,5 @@
+# Evaluation — shared across all experiments
+eval_actor: 0
+expl_actor: 1
+num_eval_envs: 128
+episode_length: 1000

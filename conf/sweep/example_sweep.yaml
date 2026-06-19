@@ -1,0 +1,37 @@
+# Example WandB sweep config.
+#
+# Usage:
+#   python infra/sweep.py --config conf/sweep/example_sweep.yaml
+#   python infra/sweep.py --config conf/sweep/example_sweep.yaml --count 20
+#
+# This creates a WandB sweep and runs agents.
+# Each agent picks a param combo, loads the base experiment config,
+# applies the sweep overrides, and runs training.
+
+# Base experiment to sweep over (required)
+base_experiment: ant_d8_s2000
+
+# Sweep method: grid, random, or bayes
+method: bayes
+
+# Metric to optimize
+metric:
+  name: eval/episode_success_any
+  goal: maximize
+
+# Parameters to sweep
+parameters:
+  # Fixed parameters (override base experiment)
+  depth:
+    values: [8, 16, 32]
+  seed:
+    values: [1000, 2000, 3000]
+
+  # Continuous parameters (bayes/random only)
+  # entropy_param:
+  #   min: 0.1
+  #   max: 1.0
+  #   distribution: uniform
+
+  # actor_lr:
+  #   values: [0.0001, 0.0003, 0.001]

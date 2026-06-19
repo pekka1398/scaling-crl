@@ -1,0 +1,6 @@
+# Replay buffer — shared across all experiments
+max_replay_size: 10000
+min_replay_size: 1000
+batch_size: 512
+num_envs: 512
+unroll_length: 62

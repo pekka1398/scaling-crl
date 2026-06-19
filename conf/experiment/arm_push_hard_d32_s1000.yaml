@@ -1,0 +1,20 @@
+# @package _global_
+# Experiment: arm_push_hard_d32_s1000
+
+defaults:
+  - /network
+  - /optimizer
+  - /replay
+  - /rl
+  - /eval
+  - /wandb
+  - /checkpoint
+  - _self_
+
+exp_name: arm_push_hard_d32_s1000
+env_id: arm_push_hard
+depth: 32
+seed: 1000
+num_epochs: 100
+
+total_env_steps: 100000000

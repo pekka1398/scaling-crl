@@ -1,0 +1,10 @@
+# Checkpointing — shared across all experiments
+resume_from: true
+checkpoint: true
+checkpoint_save_interval_epochs: 10
+checkpoint_max_to_keep: 3
+checkpoint_keep_period: 50
+save_buffer: 0
+capture_vis: false
+num_render: 10
+artifact_upload_interval_epochs: 50

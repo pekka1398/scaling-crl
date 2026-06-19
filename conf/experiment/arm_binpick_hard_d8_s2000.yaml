@@ -1,0 +1,20 @@
+# @package _global_
+# Experiment: arm_binpick_hard_d8_s2000
+
+defaults:
+  - /network
+  - /optimizer
+  - /replay
+  - /rl
+  - /eval
+  - /wandb
+  - /checkpoint
+  - _self_
+
+exp_name: arm_binpick_hard_d8_s2000
+env_id: arm_binpick_hard
+depth: 8
+seed: 2000
+num_epochs: 100
+
+total_env_steps: 100000000

@@ -1,0 +1,20 @@
+# @package _global_
+# Experiment: humanoid_u_maze_d64_s1000
+
+defaults:
+  - /network
+  - /optimizer
+  - /replay
+  - /rl
+  - /eval
+  - /wandb
+  - /checkpoint
+  - _self_
+
+exp_name: humanoid_u_maze_d64_s1000
+env_id: humanoid_u_maze
+depth: 64
+seed: 1000
+num_epochs: 100
+
+total_env_steps: 100000000
