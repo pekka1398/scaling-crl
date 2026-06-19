@@ -27,10 +27,6 @@ from utils.checkpoint import (
     load_legacy_checkpoint, create_checkpoint_manager, restore_checkpoint,
     find_legacy_checkpoint, CheckpointConfig,
 )
-from train import Args, AttrDict
-import __main__
-__main__.Args = Args
-__main__.AttrDict = AttrDict
 
 
 def load_actor(exp_name, checkpoint=None):
@@ -41,13 +37,12 @@ def load_actor(exp_name, checkpoint=None):
     if os.path.exists(args_path):
         with open(args_path, 'rb') as f:
             ckpt_args = pickle.load(f)
-        # Support both dict and dataclass formats
         def _get(key, default=None):
             if isinstance(ckpt_args, dict):
                 return ckpt_args.get(key, default)
             return getattr(ckpt_args, key, default)
         env_id = _get("env_id")
-        depth = _get("actor_depth")
+        depth = _get("depth") or _get("actor_depth")
         seed = _get("seed")
         actor_width = _get("actor_network_width", 256)
         use_relu = _get("use_relu", 0)

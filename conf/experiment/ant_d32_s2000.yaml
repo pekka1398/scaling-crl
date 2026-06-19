@@ -1,0 +1,20 @@
+# @package _global_
+# Experiment: ant_d32_s2000
+
+defaults:
+  - /network
+  - /optimizer
+  - /replay
+  - /rl
+  - /eval
+  - /wandb
+  - /checkpoint
+  - _self_
+
+exp_name: ant_d32_s2000
+env_id: ant
+depth: 32
+seed: 2000
+num_epochs: 100
+
+total_env_steps: 100000000

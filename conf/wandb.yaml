@@ -1,0 +1,7 @@
+# Wandb — shared across all experiments
+track: true
+wandb_mode: online
+wandb_group: ""
+wandb_project_name: scaling-crl-v2
+wandb_entity: sungwayne99999-national-cheng-kung-university-co-op
+wandb_dir: .

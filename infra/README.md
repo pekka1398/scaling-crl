@@ -2,41 +2,90 @@
 
 ## Architecture
 
-Single entry point: `launcher.py` + YAML experiment definitions.
+Hydra structured configs + per-experiment YAML files in `conf/experiment/`.
 
-All experiment naming uses `config.Experiment.exp_name` as the single source of truth.
+All experiment naming uses `exp_name` as the single source of truth.
 No ad-hoc string assembly — every log, checkpoint, and wandb identifier comes from `exp_name`.
 
 ## Experiment Definition
 
-All experiment config comes from YAML. Each entry must include all required fields.
-See `note/config_schema.md` for the full field list.
+Each experiment is a self-contained YAML file in `conf/experiment/`.
+Shared settings (network, optimizer, replay, etc.) are config groups in `conf/`.
 
-```yaml
-- exp_name: ant_d8_s1000    # identity — all naming uses this
-  env_id: ant
-  depth: 8
-  seed: 1000
-  num_epochs: 100
-  total_env_steps: 100000000
-  # ... all other required fields (see config_schema.md)
+```
+conf/
+├── config.py              # Structured config (all fields MISSING = required)
+├── network.yaml           # Actor/critic width
+├── optimizer.yaml         # Learning rates
+├── replay.yaml            # Buffer, batch size, num_envs
+├── rl.yaml                # RL hyperparameters
+├── eval.yaml              # Eval settings
+├── wandb.yaml             # Wandb project/entity
+├── checkpoint.yaml        # Checkpoint settings
+└── experiment/
+    ├── ant_d8_s2000.yaml  # One file per experiment
+    ├── ant_d16_s2000.yaml
+    └── ...
 ```
 
-No defaults in code — missing field = error.
+Each experiment file includes config groups and overrides only what varies:
+
+```yaml
+# @package _global_
+defaults:
+  - /network
+  - /optimizer
+  - /replay
+  - /rl
+  - /eval
+  - /wandb
+  - /checkpoint
+
+exp_name: ant_d8_s2000
+env_id: ant
+depth: 8
+seed: 2000
+num_epochs: 100
+total_env_steps: 100000000
+```
 
 ## Usage
 
-    # Preview
-    python launcher.py --yaml all_experiments.yaml --dry-run
+    # Run single experiment
+    python train.py --experiment ant_d8_s1000
+
+    # Run with CLI overrides
+    python train.py --experiment ant_d8_s1000 actor_lr=0.001
+
+    # Compile check (1 epoch, no checkpoint)
+    python train.py --experiment ant_d8_s1000 --compile_check
+
+## Launcher
+
+### Option A: Custom launcher (recommended, handles compile checks + GPU packing)
+
+    # Preview all jobs
+    python infra/launcher.py --dry-run
 
     # Submit all
-    python launcher.py --yaml all_experiments.yaml
+    python infra/launcher.py
+
+    # Submit specific experiments
+    python infra/launcher.py --experiments ant_d8_s2000 ant_d16_s2000
 
     # Limit to first job
-    python launcher.py --yaml all_experiments.yaml --limit 1
+    python infra/launcher.py --limit 1
 
-    # Override memory
-    python launcher.py --yaml all_experiments.yaml --mem 100G
+### Option B: Hydra submitit launcher (pure Python, no shell scripts)
+
+    # Submit single experiment to SLURM
+    python train.py -m experiment=ant_d8_s2000 hydra/launcher=submitit_slurm
+
+    # Submit multiple experiments (each becomes a SLURM job)
+    python train.py -m experiment=ant_d8_s2000,ant_d32_s2000 hydra/launcher=submitit_slurm
+
+    # Override partition
+    python train.py -m experiment=ant_d8_s2000 hydra/launcher=submitit_slurm hydra.launcher.partition=dev
 
 ## Naming Convention
 
@@ -53,18 +102,48 @@ No defaults in code — missing field = error.
 
 - 1 CPU, N GPU per job (one per experiment in the batch)
 - Compile check before training (JIT warmup, 1 epoch, no checkpoint)
-- WANDB_MODE=offline, sync via wandb-osh daemon on login node
+- Wandb online mode (compute nodes have network access)
 - Default memory: 200G per job
 - Checkpoints via Orbax (atomic writes, auto-cleanup keep=3, auto-resume)
 - Legacy pickle checkpoints still loadable for old experiments
 
 ## Monitoring
 
-    # View cluster status
+SLURM cluster status (terminal):
+
     bash infra/monitor.sh              # all
     bash infra/monitor.sh nodes        # per-node GPU
     bash infra/monitor.sh running      # running jobs
     bash infra/monitor.sh pending      # pending jobs
+
+SLURM → WandB dashboard (browser):
+
+    # One-shot
+    python infra/monitor_to_wandb.py
+
+    # Continuous (refresh every 60s)
+    python infra/monitor_to_wandb.py --loop 60
+
+    # Background
+    nohup python infra/monitor_to_wandb.py --loop 60 &
+
+## Sweeps (disabled by default)
+
+WandB Sweeps for hyperparameter search. Not used for current paper (depth is the independent variable, other hyperparams are fixed).
+
+For future papers with hyperparameter search:
+
+    # Create sweep config
+    vi conf/sweep/my_sweep.yaml
+
+    # Create and run sweep
+    python infra/sweep.py --config conf/sweep/my_sweep.yaml
+
+    # Create sweep only (run agents on SLURM later)
+    python infra/sweep.py --config conf/sweep/my_sweep.yaml --create-only
+
+    # Run agent for existing sweep
+    python infra/sweep.py --sweep-id <entity>/<project>/<sweep_id>
 
 ## Evaluation
 
@@ -88,13 +167,19 @@ No defaults in code — missing field = error.
     # Force re-render everything
     .venv/bin/python render.py --all --force
 
-    # Customize number of episodes
-    .venv/bin/python render.py --exp_name ant_d8_s1000 --num_episodes 5
+## Checkpoints (WandB Artifacts)
+
+Checkpoints are automatically uploaded to WandB as Artifacts after training.
+On the WandB dashboard: Run page → Artifacts tab → download any checkpoint.
+
+No manual backup needed — checkpoints are linked to their training run.
 
 ## Results
 
-    # Print summary table
-    python collect_results.py
+Primary: Use WandB web UI (Workspace → Add Panel → Weave Table).
 
-    # Save CSV/JSON
-    python collect_results.py --csv results.csv --json results.json
+For scripting/CSV export:
+
+    python collect_results.py
+    python collect_results.py --csv results.csv
+    python collect_results.py --env ant --sort episode_reward

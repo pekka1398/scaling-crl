@@ -1,0 +1,20 @@
+# @package _global_
+# Experiment: smoke_test
+
+defaults:
+  - /network
+  - /optimizer
+  - /replay
+  - /rl
+  - /eval
+  - /wandb
+  - /checkpoint
+  - _self_
+
+exp_name: smoke_test
+env_id: ant
+depth: 8
+seed: 1000
+num_epochs: 5
+
+total_env_steps: 1000000

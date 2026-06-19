@@ -1,6 +1,12 @@
 # Experiment Configuration Schema
 
-All experiment config comes from YAML. No defaults in code. Missing field = error.
+All experiment config comes from YAML, validated via Hydra structured config (`conf/config.py`).
+No defaults in code. Missing field = error at config load time.
+
+## Structured Config
+
+`conf/config.py` defines `ExperimentConfig` as a dataclass where every field is `MISSING`.
+Hydra raises `MissingMandatoryValue` if any required field is not provided.
 
 ## Required Fields
 
@@ -54,10 +60,17 @@ All experiment config comes from YAML. No defaults in code. Missing field = erro
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `eval_env_id` | str | env_id | Eval environment (if different from training) |
+| `eval_env_id` | str | None | Eval environment (defaults to env_id at runtime) |
 
 ## Usage
 
 ```bash
-python train.py --yaml infra/all_experiments.yaml --exp_name ant_d8_s1000
+# Run single experiment
+python train.py --experiment ant_d8_s1000
+
+# Run with CLI overrides (Hydra-style dotlist)
+python train.py --experiment ant_d8_s1000 actor_lr=0.001
+
+# Compile check (1 epoch, no checkpoint)
+python train.py --experiment ant_d8_s1000 --compile_check
 ```

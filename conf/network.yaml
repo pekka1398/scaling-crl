@@ -1,0 +1,3 @@
+# Network architecture — shared across all experiments
+actor_network_width: 256
+critic_network_width: 256

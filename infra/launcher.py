@@ -1,19 +1,17 @@
 #!/usr/bin/env python3
 """Scaling-CRL experiment launcher.
 
-Reads experiment YAML, packs experiments into batches,
+Scans conf/experiment/ for experiment configs, packs them into batches,
 generates sbatch scripts, and submits them.
 
-All experiment config comes from YAML. train.py reads YAML directly.
-launcher only handles: YAML → batch → sbatch → submit.
-
 Usage:
-  python launcher.py --yaml all_experiments.yaml --dry-run
-  python launcher.py --yaml all_experiments.yaml
-  python launcher.py --yaml all_experiments.yaml --limit 1
+  python infra/launcher.py --dry-run
+  python infra/launcher.py
+  python infra/launcher.py --limit 1
+  python infra/launcher.py --experiments ant_d8_s2000 ant_d16_s2000
 """
 
-import yaml, subprocess, os, time, random, sys, glob, shutil
+import subprocess, os, time, random, sys, glob, shutil
 from datetime import datetime
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
@@ -23,6 +21,16 @@ STEALTH = ["data_sync","sys_check","log_proc","batch_run","cache_clean","mem_tes
            "tmp_clean","file_scan","val_test","pre_proc"]
 
 LOGDIR = "/home/u2169145/code/scaling-crl/logs"
+CONF_EXPERIMENT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "conf", "experiment")
+
+
+def list_experiments():
+    """List all experiment names from conf/experiment/."""
+    exps = []
+    for f in sorted(os.listdir(CONF_EXPERIMENT_DIR)):
+        if f.endswith(".yaml"):
+            exps.append(f[:-5])
+    return exps
 
 
 def archive_old_logs():
@@ -40,40 +48,20 @@ def archive_old_logs():
     print(f"Archived {len(log_files)} old logs to logs/old/{ts}")
 
 
-def load_experiments(yaml_path, grouped=False):
-    """Load YAML and return list of experiment dicts.
+def pack_jobs(experiments, gpus_per_node=8):
+    """Pack experiments into jobs, one experiment per GPU.
 
-    If grouped=True, returns list of lists (one per <job> section).
+    Returns list of lists, each inner list is one SLURM job.
     """
-    with open(yaml_path) as f:
-        text = f.read()
-
-    import re
-    parts = re.split(r'^#\s*<job[^>]*>.*$', text, flags=re.MULTILINE | re.IGNORECASE)
-
-    groups = []
-    for chunk in parts:
-        chunk = chunk.strip()
-        if not chunk:
-            continue
-        raw = yaml.safe_load(chunk)
-        if raw is None:
-            continue
-        if isinstance(raw, list):
-            groups.append(raw)
-
-    if not groups:
-        return [] if grouped else []
-
-    if grouped:
-        return groups
-    return [e for g in groups for e in g]
+    jobs = []
+    for i in range(0, len(experiments), gpus_per_node):
+        jobs.append(experiments[i:i + gpus_per_node])
+    return jobs
 
 
-def build_batch_script(yaml_path, exps, partition="8gpus", stealth=True, mem="200G"):
+def build_batch_script(exps, partition="8gpus", stealth=True, mem="200G"):
     n = len(exps)
     jn = random.choice(STEALTH) if stealth else "batch_" + str(n)
-    yaml_abs = os.path.abspath(yaml_path)
     lines = [
         "#!/bin/bash",
         "#SBATCH --account=MST114560",
@@ -113,14 +101,12 @@ def build_batch_script(yaml_path, exps, partition="8gpus", stealth=True, mem="20
     ]
 
     # Compile check
-    for i, e in enumerate(exps):
-        exp_name = e["exp_name"]
+    for i, exp_name in enumerate(exps):
         lines.append("")
         lines.append(f"echo '[compile] {exp_name} ...'")
         compile_cmd = (
             f"CUDA_VISIBLE_DEVICES=${{GPUS[{i}]}} $P train.py"
-            f" --yaml {yaml_abs}"
-            f" --exp_name {exp_name}"
+            f" --experiment {exp_name}"
             f" --compile_check"
             f" > {LOGDIR}/compile_{exp_name}.log 2>&1"
         )
@@ -141,12 +127,10 @@ def build_batch_script(yaml_path, exps, partition="8gpus", stealth=True, mem="20
     ]
 
     # Training
-    for i, e in enumerate(exps):
-        exp_name = e["exp_name"]
+    for i, exp_name in enumerate(exps):
         cmd = (
             f"CUDA_VISIBLE_DEVICES=${{GPUS[{i}]}} $P train.py"
-            f" --yaml {yaml_abs}"
-            f" --exp_name {exp_name}"
+            f" --experiment {exp_name}"
             f" > {LOGDIR}/{exp_name}.log 2>&1 &"
         )
         lines.append(cmd)
@@ -180,48 +164,51 @@ def submit(script, name):
 
 def main():
     import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--yaml", required=True, help="Path to experiment YAML file")
+    parser = argparse.ArgumentParser(description="Scaling-CRL experiment launcher")
+    parser.add_argument("--experiments", nargs="*", help="Specific experiments to run (default: all)")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--stealth", action="store_true", default=True)
     parser.add_argument("--limit", type=int, default=0, help="Max number of jobs to submit (0=all)")
     parser.add_argument("--mem", default="200G", help="Memory per job (default: 200G)")
     parser.add_argument("--partition", default="8gpus")
+    parser.add_argument("--gpus-per-node", type=int, default=8, help="GPUs per SLURM node")
     args = parser.parse_args()
 
-    groups = load_experiments(args.yaml, grouped=True)
-    if not groups:
-        print("No experiments"); return
+    # Get experiment list
+    if args.experiments:
+        all_exps = args.experiments
+    else:
+        all_exps = list_experiments()
 
-    total = sum(len(g) for g in groups)
-    print(f"Found {total} experiments in {len(groups)} section(s)")
+    if not all_exps:
+        print("No experiments found"); return
 
-    # Each <job> section = 1 SLURM job
-    batches = groups
+    print(f"Found {len(all_exps)} experiment(s)")
+
+    # Pack into jobs
+    jobs = pack_jobs(all_exps, gpus_per_node=args.gpus_per_node)
 
     if args.limit > 0:
-        batches = batches[:args.limit]
-    print(f"Will submit {len(batches)} job(s)")
+        jobs = jobs[:args.limit]
+    print(f"Will submit {len(jobs)} job(s)")
 
     if args.dry_run:
-        for bi, b in enumerate(batches):
-            exps_str = ", ".join(e["exp_name"] for e in b)
-            print(f"  Job {bi+1}: {len(b)} exps - {exps_str}")
+        for ji, job in enumerate(jobs):
+            print(f"  Job {ji+1}: {len(job)} exps - {', '.join(job)}")
         return
 
     archive_old_logs()
 
     ok = 0
-    for bi, b in enumerate(batches):
-        s = build_batch_script(args.yaml, b, args.partition, args.stealth, args.mem)
-        name = random.choice(STEALTH) + "_" + str(bi)
+    for ji, job in enumerate(jobs):
+        s = build_batch_script(job, args.partition, args.stealth, args.mem)
+        name = random.choice(STEALTH) + "_" + str(ji)
         jid = submit(s, name)
         if jid:
             ok += 1
-            exps_str = ", ".join(e["exp_name"] for e in b)
-            print(f"[{bi+1}/{len(batches)}] Job {jid} ({len(b)} exps): {exps_str}")
+            print(f"[{ji+1}/{len(jobs)}] Job {jid} ({len(job)} exps): {', '.join(job)}")
         else:
-            print(f"[{bi+1}/{len(batches)}] FAILED")
+            print(f"[{ji+1}/{len(jobs)}] FAILED")
             time.sleep(5)
             jid = submit(s, name + "_r")
             if jid:
@@ -229,7 +216,7 @@ def main():
                 print(f"  RETRY OK: {jid}")
         time.sleep(1)
 
-    print(f"Submitted: {ok}/{len(batches)} jobs")
+    print(f"Submitted: {ok}/{len(jobs)} jobs")
 
 
 if __name__ == "__main__":

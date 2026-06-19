@@ -25,17 +25,13 @@ from brax import envs
 
 from utils.evaluator import CrlEvaluator
 from crl.networks import Actor
+from crl.types import Transition, TrainingState
 from utils.env_factory import make_env, wrap_env
 from utils.checkpoint import (
     load_legacy_checkpoint, create_checkpoint_manager, restore_checkpoint,
     find_legacy_checkpoint, CheckpointConfig,
 )
-from train import Args, TrainingState, Transition, AttrDict
 from flax.training.train_state import TrainState as FlaxTrainState
-import __main__
-__main__.Args = Args
-__main__.AttrDict = AttrDict
-
 
 
 def run_eval(exp_name=None, checkpoint=None, env_id=None, depth=None, seed=None,
@@ -56,7 +52,6 @@ def run_eval(exp_name=None, checkpoint=None, env_id=None, depth=None, seed=None,
     if os.path.exists(args_path):
         with open(args_path, 'rb') as f:
             ckpt_args = pickle.load(f)
-        # Support both dict and dataclass formats
         def _get(key, default=None):
             if isinstance(ckpt_args, dict):
                 return ckpt_args.get(key, default)
@@ -64,7 +59,7 @@ def run_eval(exp_name=None, checkpoint=None, env_id=None, depth=None, seed=None,
         if env_id is None:
             env_id = _get("env_id")
         if depth is None:
-            depth = _get("actor_depth")
+            depth = _get("depth") or _get("actor_depth")
         if seed is None:
             seed = _get("seed")
         actor_width = _get("actor_network_width", 256)
@@ -81,7 +76,6 @@ def run_eval(exp_name=None, checkpoint=None, env_id=None, depth=None, seed=None,
     # Load checkpoint: try Orbax first, then legacy pickle
     ckpt_data = None
     if os.path.isdir(os.path.join(save_path, "checkpoints")):
-        # Use default config for eval — only need to read, not write
         eval_ckpt_config = CheckpointConfig(save_interval_epochs=10, max_to_keep=3, keep_period=50)
         manager = create_checkpoint_manager(save_path, eval_ckpt_config)
         ckpt_data, step = restore_checkpoint(manager)
@@ -89,7 +83,6 @@ def run_eval(exp_name=None, checkpoint=None, env_id=None, depth=None, seed=None,
             print(f"Loaded Orbax checkpoint at step {step}")
 
     if ckpt_data is None:
-        # Fall back to legacy pickle
         if checkpoint:
             ckpt_data = load_legacy_checkpoint(checkpoint)
         else:
@@ -126,7 +119,7 @@ def run_eval(exp_name=None, checkpoint=None, env_id=None, depth=None, seed=None,
     fake_actor_state = FlaxTrainState.create(
         apply_fn=actor.apply,
         params=actor_params,
-        tx=optax.sgd(0.0),  # dummy optimizer, never used
+        tx=optax.sgd(0.0),
     )
     fake_ts = TrainingState(
         env_steps=jnp.zeros(()),
@@ -188,7 +181,6 @@ def eval_all(force=False):
     for d in sorted(os.listdir("runs")):
         if d.startswith("_") or d.startswith("."):
             continue
-        # Check for Orbax checkpoints dir or legacy final.pkl
         has_ckpt = (os.path.isdir(f"runs/{d}/checkpoints") or
                     os.path.exists(f"runs/{d}/final.pkl"))
         if not has_ckpt:

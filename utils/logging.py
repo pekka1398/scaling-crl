@@ -2,18 +2,19 @@
 """
 
 import wandb
-import wandb_osh
-from wandb_osh.hooks import TriggerWandbSyncHook
+from omegaconf import DictConfig, OmegaConf
 
 
 def setup_wandb(cfg, resume_id=None):
     """Initialize wandb. Returns (trigger_sync, run).
 
     Args:
-        cfg: config dict or SimpleNamespace
+        cfg: OmegaConf DictConfig, dict, or SimpleNamespace
         resume_id: wandb run ID to resume (from wandb_id.txt)
     """
-    if isinstance(cfg, dict):
+    if isinstance(cfg, DictConfig):
+        cfg_dict = OmegaConf.to_container(cfg, resolve=True)
+    elif isinstance(cfg, dict):
         cfg_dict = dict(cfg)
     else:
         cfg_dict = vars(cfg)
@@ -22,7 +23,7 @@ def setup_wandb(cfg, resume_id=None):
     exp_name = cfg_dict.get("exp_name", "")
 
     init_kwargs = dict(
-        project=cfg_dict.get("wandb_project_name", "scaling-crl-nano4"),
+        project=cfg_dict.get("wandb_project_name", "scaling-crl-v2"),
         entity=cfg_dict.get("wandb_entity", "sungwayne99999-national-cheng-kung-university-co-op"),
         mode=cfg_dict.get("wandb_mode", "online"),
         group=wandb_group,
@@ -38,9 +39,4 @@ def setup_wandb(cfg, resume_id=None):
 
     run = wandb.init(**init_kwargs)
 
-    trigger_sync = None
-    if cfg_dict.get("wandb_mode", "online") == 'offline':
-        wandb_osh.set_log_level("ERROR")
-        trigger_sync = TriggerWandbSyncHook()
-
-    return trigger_sync, run
+    return None, run

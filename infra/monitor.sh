@@ -15,7 +15,7 @@ SNAP="$DIR/infra/snapshots/latest.json"
 # Colors
 R='\033[0;31m'   G='\033[0;32m'   Y='\033[0;33m'
 B='\033[0;34m'   C='\033[0;36m'   N='\033[0m'
-BOLD='\033[1m'
+BOLD='\033[1m'  
 
 if [ ! -f "$SNAP" ]; then
     echo "No snapshot found. Run: python infra/snapshot.py"
