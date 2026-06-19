@@ -86,6 +86,7 @@ def build_batch_script(exps, partition="8gpus", stealth=True, mem="200G"):
         "export XLA_PYTHON_CLIENT_PREALLOCATE=false",
         "export XLA_PYTHON_CLIENT_ALLOCATOR=platform",
         "export JAX_COMPILATION_CACHE_DIR=/home/u2169145/.cache/jax",
+        "export CUDA_ROOT=$(find .venv -path '*/nvidia/cuda_nvcc' -type d | head -1)",
         "",
         "mkdir -p " + LOGDIR,
         "P=.venv/bin/python",
