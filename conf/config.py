@@ -54,7 +54,7 @@ class ExperimentConfig:
     eval_env_id: Optional[str] = None  # defaults to env_id at runtime
 
     # --- Checkpointing ---
-    resume_from: str = MISSING
+    resume_from: bool = MISSING
     checkpoint: bool = MISSING
     checkpoint_save_interval_epochs: int = MISSING
     checkpoint_max_to_keep: int = MISSING
