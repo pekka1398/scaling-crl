@@ -22,7 +22,6 @@ STEALTH = ["data_sync","sys_check","log_proc","batch_run","cache_clean","mem_tes
            "io_bench","env_setup","pkg_build","lib_check","conf_load","stat_comp",
            "tmp_clean","file_scan","val_test","pre_proc"]
 
-BATCH_SIZE = 8
 LOGDIR = "/home/u2169145/code/scaling-crl/logs"
 
 
@@ -102,6 +101,13 @@ def build_batch_script(yaml_path, exps, partition="8gpus", stealth=True, mem="20
         "mkdir -p " + LOGDIR,
         "P=.venv/bin/python",
         "",
+        "# Parse SLURM GPU allocation (SLURM sets CUDA_VISIBLE_DEVICES)",
+        'IFS="," read -ra GPUS <<< "${CUDA_VISIBLE_DEVICES:-0}"',
+        "",
+        "echo 'CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES'",
+        "echo 'GPUS=${GPUS[*]}'",
+        "nvidia-smi --query-gpu=index,name --format=csv,noheader 2>&1 | head -5",
+        "",
         "echo '=== Compile check: " + str(n) + " experiments ==='",
         "COMPILE_FAIL=0",
     ]
@@ -112,7 +118,7 @@ def build_batch_script(yaml_path, exps, partition="8gpus", stealth=True, mem="20
         lines.append("")
         lines.append(f"echo '[compile] {exp_name} ...'")
         compile_cmd = (
-            f"CUDA_VISIBLE_DEVICES={i} $P train.py"
+            f"CUDA_VISIBLE_DEVICES=${{GPUS[{i}]}} $P train.py"
             f" --yaml {yaml_abs}"
             f" --exp_name {exp_name}"
             f" --compile_check"
@@ -138,7 +144,7 @@ def build_batch_script(yaml_path, exps, partition="8gpus", stealth=True, mem="20
     for i, e in enumerate(exps):
         exp_name = e["exp_name"]
         cmd = (
-            f"CUDA_VISIBLE_DEVICES={i} $P train.py"
+            f"CUDA_VISIBLE_DEVICES=${{GPUS[{i}]}} $P train.py"
             f" --yaml {yaml_abs}"
             f" --exp_name {exp_name}"
             f" > {LOGDIR}/{exp_name}.log 2>&1 &"
@@ -178,7 +184,6 @@ def main():
     parser.add_argument("--yaml", required=True, help="Path to experiment YAML file")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--stealth", action="store_true", default=True)
-    parser.add_argument("--batch-size", type=int, default=BATCH_SIZE)
     parser.add_argument("--limit", type=int, default=0, help="Max number of jobs to submit (0=all)")
     parser.add_argument("--mem", default="200G", help="Memory per job (default: 200G)")
     parser.add_argument("--partition", default="8gpus")
@@ -191,25 +196,8 @@ def main():
     total = sum(len(g) for g in groups)
     print(f"Found {total} experiments in {len(groups)} section(s)")
 
-    if len(groups) > 1:
-        batches = groups
-    else:
-        exps = groups[0]
-        batches = []
-        current_batch = []
-        current_depth = None
-        for e in exps:
-            d = e.get("depth", 0)
-            if current_depth is not None and d != current_depth and len(current_batch) > 0:
-                batches.append(current_batch)
-                current_batch = []
-            if len(current_batch) >= args.batch_size:
-                batches.append(current_batch)
-                current_batch = []
-            current_batch.append(e)
-            current_depth = d
-        if current_batch:
-            batches.append(current_batch)
+    # Each <job> section = 1 SLURM job
+    batches = groups
 
     if args.limit > 0:
         batches = batches[:args.limit]

@@ -9,8 +9,8 @@ No ad-hoc string assembly — every log, checkpoint, and wandb identifier comes 
 
 ## Experiment Definition
 
-`config.py` defines the `Experiment` dataclass with all hyperparameters.
-YAML files list experiments; each entry maps 1:1 to `Experiment`.
+All experiment config comes from YAML. Each entry must include all required fields.
+See `note/config_schema.md` for the full field list.
 
 ```yaml
 - exp_name: ant_d8_s1000    # identity — all naming uses this
@@ -19,11 +19,10 @@ YAML files list experiments; each entry maps 1:1 to `Experiment`.
   seed: 1000
   num_epochs: 100
   total_env_steps: 100000000
+  # ... all other required fields (see config_schema.md)
 ```
 
-Fields with defaults (can omit from YAML):
-`actor_skip_connections: 4`, `critic_skip_connections: 4`,
-`batch_size: 512`, `num_envs: 512`, `actor_lr: 3e-4`, etc.
+No defaults in code — missing field = error.
 
 ## Usage
 

@@ -58,98 +58,16 @@ Submitit 對於個人跑小實驗很爽，但在 2,000 卡的多租戶（Multi-t
 
 
 
+1. for the config and settings and experiment name... those thing, i care about "no fallback no default" and " config is seperated file(so thats why we made that yaml file. not constrained on yaml but must be seperated)" . understand?tell me more about hydra
+2. i am interesting on both submitit and wandb launch. since we are also using wandb for experiment moniter...
+3. interested still
+4. can we use wandb for experiment aggregation? what is different from our method, that collect result script now?
+
+
+1. i dont affraid of "a dependency and a learning curve". if other guy have develop some tool and they have garanteened the tool is usable and no bug(at lease compared to our start-from-zero script), then we should use it. i am also happy to hear " missing field = error"
+2. submitit sounds great . but for wandb launcher, i want to know if there's any integration or monitor with wandb. like, can we monitor those launch history, those job status, running time ... etc and collect to wandb? so i can see everything happend on a clean wandb website panel( good! i prefer that) instead of many seperated script and terminal.
+3. wandb sweeps... but actually we are doing experiments in .... we decide those hyperparamater in first and we planed to draw that experiment data graph on our paper, then we do experiments. if we use wandb sweeps or bayesian optimization and close those hopeless experiments earlier, wont we loss the complete graph for that experiment? so we cant put it on paper? or is it not a problem? tell me. i want know the relation between paper experiment demand  and hyperparamater auto optimizer
+4. that's good. actually i found that the computing node on this cluster has network! so we actually just set 'online' now instead setting daemon on login node or set it to 'offline'
 
 
 
-
-
-
-1. ok 先做這個
-2. 這個 你覺得怎麼辦比較好 我是傾向於我自己手動管理跟追蹤進程跑得怎樣 log那些
-3. 這個可以做 但不是最優先
-4. ok
-5. ok 
-6. ok
-7. 這個很重要 你覺得怎麼做比較好
-8. 我其實就在想了 我們既然都在邊訓練邊有那個把checkpoint存回去的機制 還有現在也有stdout stderr會進到log檔案 那為什麼不能邊訓練也一起存log資料？登入節點有網路 還是可以上傳wandb吧
-9. 這個你覺得怎麼辦
-10. 這個挺重要的 要顧到的邊界情況跟可能出的問題太多 要小心仔細 可能要討論一下
-
-
-
- 第 7 點：結果輸出 / 收集                                                                                                                            
-                                                                                                                                                     
- 你的想法是對的 — 既然已經有 checkpoint 存回去的機制，metrics 也應該一起存。我建議分兩層：                                                           
-                                                                                                                                                     
- Layer 1: train.py 每次 eval 後存 metrics                                                                                                            
- - 每個 epoch 結束後，把 metrics dict 寫到 runs/{exp_name}/metrics.jsonl（append mode，一行一個 JSON）                                               
- - 訓練結束時不需要額外動作，檔案已經完整                                                                                                            
- - 這樣即使 job 被 kill，已存的 epochs 的 metrics 都在                                                                                               
-                                                                                                                                                     
- Layer 2: 登入節點上跑 collect_results.py                                                                                                            
- - 掃描所有 runs/*/metrics.jsonl                                                                                                                     
- - 匯出成一個 CSV/JSON summary table（exp_name, status, last_epoch, success_rate, ...）                                                              
- - 可以隨時跑，不需要等訓練結束                                                                                                                      
-                                                                                                                                                     
- 這樣你不用 grep log 檔，也不用 sync wandb 才能看到數字。metrics.jsonl 是結構化的，可以直接 pandas 讀。
- 第 8 點：WandB 同步    
-    
- 你說得對 — 計算節點把 checkpoint 存回 /home（WekaFS），登入節點看得到。那 metrics 也能同樣存回去，登入節點有網路就能上傳。 
-    
- 但目前計算節點的 wandb 是 offline mode，wandb-osh 的機制是：   
- 1. 計算節點寫 trigger file 到共享存儲 
- 2. 登入節點跑 wandb sync daemon 消化 trigger → 上傳雲端   
-    
- 問題是 daemon 沒跑。兩個選擇：   
-    
- 選項 A: 啟動 wandb sync daemon（簡單）
- - 在登入節點跑 nohup wandb sync --sync-all wandb/ &  
- - 搭配第 7 點的 metrics.jsonl，等於雙保險  
-    
- 選項 B: 自己寫上傳腳本（更可控） 
- - train.py 存 metrics.jsonl 到 runs/（WekaFS 共享）  
- - 登入節點跑一個輕量 daemon，讀 metrics.jsonl，POST 到 wandb API（或直接用 wandb online mode 從登入節點 log）    
- - 好處是不依賴 wandb-osh，完全自己控制
-    
- 我傾向 A + 第 7 點的 metrics.jsonl。wandb-osh 已經有了，只需要啟動 daemon。metrics.jsonl 當備份和離線分析用。另外要改 train.py 的 wandb   
- entity/project（目前還是原作者的 wang-kevin3290-princeton-university）。 
-    
- 你覺得？還有 wandb entity 要改成什麼？env_setup.md 裡提到 sungwayne99999。    
-    
- ────────────────────────────────────────────────────────────────────────────────   
-    
- 第 9 點：Snapshot daemon    
-    
- 現在的狀況： 
- - snapshot.py --loop 600 跑在 SSH session 裡（PID 455577）
- - 沒有 tmux/screen 保護，SSH 斷線就死 
- - monitor.sh 不會警告 snapshot 過期   
-    
- 建議：  
- 1. 用 nohup 啟動，不受 SSH 斷線影響   
- 2. monitor.sh 開頭加 snapshot age check — 如果 latest.json 超過 20 分鐘沒更新，印警告   
- 3. 或者更簡單：不跑 daemon，monitor.sh 先跑一次 snapshot.py（單次）再顯示。這樣永遠是新資料，但每次查要等 2-3 秒。    
-    
- 你偏好哪種？ 
-    
- ────────────────────────────────────────────────────────────────────────────────   
-    
- 第 10 點：Resume 機制邊界情況    
-    
- 我剛改了 train.py 處理了以下情況：    
-    
- 已修復：
- 1. Corrupt checkpoint — load_params 改為 try/except 返回 None，不 crash  
- 2. Auto-resume 找到 corrupt 檔 — find_latest_checkpoint 從新到舊試，跳過太小的檔（<100 bytes）    
- 3. 全部 checkpoint 都 corrupt — 嘗試所有 checkpoint，都失敗就從頭開始    
- 4. Atomic write — save_params_async 先寫 /tmp/.tmp 再 rename（local atomic），再 copy 到 WekaFS   
-    
- 還需要討論的：    
-    
- 5. cleanup_old_checkpoints 的 race condition — save_params_async 是 threading，如果 epoch N 的 thread 還沒寫完，epoch N+1 就呼叫
-    cleanup_old_checkpoints(keep=3)，理論上 N 的檔案還在（因為 N 是倒數第 2 新），不會被刪。但如果連續多個 epoch 都在存（前 5 個 epoch
-    每個都存），thread 積壓可能導致 cleanup 刪到正在寫的檔。不過實際上 keep=3 且前 5 epoch後改為每 10 epoch 存一次，積壓機率很低。    
- 6. staging 失敗 — 如果 /tmp 滿了或不可寫，_save() 會在 thread 裡 crash，主程式不知道。可以加 try/except 在 thread 裡，失敗時 fallback 直接寫   
-    WekaFS，或者 print warning。  
- 7. 舊格式 checkpoint（bare tuple） — runs/_old/ 裡的舊 checkpoint 沒有 args.pkl，resume 時只會跳 warning 不 block。但這些舊目錄名不匹配   
-    exp_name，auto-resume 找不到，只有手動指定才會碰到。基本上不是問題。  

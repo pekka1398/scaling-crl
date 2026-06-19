@@ -11,7 +11,7 @@ import flax.linen as nn
 from crl.networks import Actor, SA_encoder, G_encoder
 from crl.types import Transition
 from crl.buffer import TrajectoryUniformSamplingQueue
-from evaluator import CrlEvaluator
+from utils.evaluator import CrlEvaluator
 
 
 def make_actor_step(actor, env, mode="stochastic", **kwargs):
@@ -307,11 +307,17 @@ def setup_evaluator(actor, sa_encoder, g_encoder, eval_env, obs_dim, eval_actor_
     """Setup evaluator. eval_env and eval_actor_key captured via closure in actor steps."""
 
     if args.eval_actor == 0:
-        step_fn = make_actor_step(actor, eval_env, mode="deterministic")
-        return CrlEvaluator(
-            lambda ts, env, es, extra_fields: step_fn(ts, es, extra_fields),
-            eval_env, num_eval_envs=args.num_eval_envs,
-            episode_length=args.episode_length, key=eval_env_key)
+        def eval_step(ts, env, es, extra_fields):
+            means, _ = actor.apply(ts.actor_state.params, es.obs)
+            actions = nn.tanh(means)
+            nstate = env.step(es, actions)
+            return nstate, Transition(
+                observation=es.obs, action=actions, reward=nstate.reward,
+                discount=1 - nstate.done,
+                extras={"state_extras": {x: nstate.info[x] for x in extra_fields}},
+            )
+        return CrlEvaluator(eval_step, eval_env, num_eval_envs=args.num_eval_envs,
+                            episode_length=args.episode_length, key=eval_env_key)
 
     elif args.eval_actor == 1:
         # Use eval_actor_key (derived from main key) for reproducibility
@@ -332,14 +338,31 @@ def setup_evaluator(actor, sa_encoder, g_encoder, eval_env, obs_dim, eval_actor_
 
     elif args.eval_actor > 1:
         K = args.eval_actor
-        multi_step = make_multi_sample_actor_step(
-            actor, sa_encoder, g_encoder, eval_env,
-            obs_dim, args.goal_start_idx, args.goal_end_idx, K)
         _eval_actor_key = eval_actor_key
         def eval_step(ts, env, es, extra_fields):
             key = jax.random.fold_in(_eval_actor_key, ts.env_steps)
-            nstate, transition = multi_step(ts, es, key, extra_fields)
-            return nstate, transition
+            keys = jax.random.split(key, K)
+            means, log_stds = actor.apply(ts.actor_state.params, es.obs)
+            stds = jnp.exp(log_stds)
+            actions = jnp.stack([
+                nn.tanh(means + stds * jax.random.normal(k, shape=means.shape, dtype=means.dtype))
+                for k in keys
+            ])
+            state = es.obs[:, :obs_dim]
+            goal = es.obs[:, obs_dim:]
+            sa_reprs = jax.vmap(
+                lambda a: sa_encoder.apply(ts.critic_state.params["sa_encoder"], state, a)
+            )(actions)
+            g_repr = g_encoder.apply(ts.critic_state.params["g_encoder"], goal)
+            q_values = -jnp.sqrt(jnp.sum((sa_reprs - g_repr) ** 2, axis=-1))
+            best_action_idx = jnp.argmax(q_values, axis=0)
+            best_actions = jnp.take_along_axis(actions, best_action_idx[None, :, None], axis=0)[0]
+            nstate = env.step(es, best_actions)
+            return nstate, Transition(
+                observation=es.obs, action=best_actions, reward=nstate.reward,
+                discount=1 - nstate.done,
+                extras={"state_extras": {x: nstate.info[x] for x in extra_fields}},
+            )
         return CrlEvaluator(eval_step, eval_env, num_eval_envs=args.num_eval_envs,
                             episode_length=args.episode_length, key=eval_env_key)
 

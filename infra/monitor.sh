@@ -57,34 +57,38 @@ import json, sys
 with open('$SNAP') as f: d = json.load(f)
 print(f\"${BOLD}=== Per-Node Status (GPU nodes) ===${N}  {d['timestamp']}\")
 print()
-print(f\"  {'NODE':<16} {'STATE':<22} {'GPU':>7} {'CPU':>9} {'MEM_GB':>12}  {'JOBS'}\")
-print(f\"  {'-'*16} {'-'*22} {'-'*7} {'-'*9} {'-'*12}  {'-'*30}\")
-for n in d['nodes']:
-    gpu_str = f\"{n['gpu_alloc']}/8\"
+print(f\"  {'NODE':<16} {'STATE':<12} {'GPU_USED':>9} {'GPU_FREE':>9} {'CPU':>9} {'MEM_USED':>9} {'MEM_FREE':>9}  {'JOBS'}\")
+print(f\"  {'-'*16} {'-'*12} {'-'*9} {'-'*9} {'-'*9} {'-'*9} {'-'*9}  {'-'*30}\")
+# Only show GPU nodes (gpu_total > 0)
+gpu_nodes = [n for n in d['nodes'] if n['gpu_total'] > 0]
+for n in gpu_nodes:
+    gpu_used = n['gpu_alloc']
     gpu_free = n['gpu_free']
+    gpu_total = n['gpu_total']
     if gpu_free == 0:
         gpu_c = '${R}'
-    elif gpu_free == 8:
+    elif gpu_free == gpu_total:
         gpu_c = '${G}'
     else:
         gpu_c = '${Y}'
     cpu_str = f\"{n['cpu_alloc']}/{n['cpu_total']}\"
-    mem_str = f\"{n['mem_alloc_gb']:.0f}/{n['mem_total_gb']:.0f}\"
+    mem_used = n['mem_alloc_gb']
+    mem_free = n['mem_total_gb'] - mem_used
+    mem_free_c = '${G}' if mem_free > n['mem_total_gb'] * 0.5 else '${Y}' if mem_free > n['mem_total_gb'] * 0.2 else '${R}'
     jobs = ','.join(str(j) for j in n.get('jobs', []))
     if not jobs:
         jobs = '-'
-    state = n['state']
-    if 'ALLOCATED' in state:
+    state = n['state'].upper()
+    if 'ALLOC' in state and 'MIXED' not in state:
         sc = '${R}'
-    elif 'IDLE' in state:
-        sc = '${G}'
-    elif 'MIXED' in state:
-        sc = '${Y}'
+    elif 'IDLE' in state or 'MIXED' in state:
+        sc = '${G}' if 'IDLE' in state else '${Y}'
     elif 'DOWN' in state or 'DRAIN' in state:
         sc = '${R}'
     else:
         sc = '${C}'
-    print(f\"  {n['node']:<16} {sc}{state:<22}${N} {gpu_c}{gpu_str:>7}${N} {cpu_str:>9} {mem_str:>12}  {jobs}\")
+    print(f\"  {n['node']:<16} {sc}{state:<12}${N} {gpu_c}{gpu_used:>4}/{gpu_total:<3}${N} {gpu_c}{gpu_free:>5}${N} {cpu_str:>9} {mem_used:>5}G  {mem_free_c}{mem_free:>5}G${N}  {jobs}\")
+print(f\"  {len(gpu_nodes)} GPU nodes\")
 print()
 "
 }

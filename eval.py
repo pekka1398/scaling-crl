@@ -23,17 +23,18 @@ import jax.numpy as jnp
 import flax.linen as nn
 from brax import envs
 
-from evaluator import CrlEvaluator
+from utils.evaluator import CrlEvaluator
 from crl.networks import Actor
 from utils.env_factory import make_env, wrap_env
 from utils.checkpoint import (
     load_legacy_checkpoint, create_checkpoint_manager, restore_checkpoint,
     find_legacy_checkpoint, CheckpointConfig,
 )
-from train import Args, TrainingState, Transition
+from train import Args, TrainingState, Transition, AttrDict
 from flax.training.train_state import TrainState as FlaxTrainState
 import __main__
 __main__.Args = Args
+__main__.AttrDict = AttrDict
 
 
 

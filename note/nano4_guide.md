@@ -25,13 +25,14 @@
 | 項目 | 值 |
 |------|-----|
 | SSH 主機帳號 | u2169145 |
-| SSH 密碼 | i#057721566490 |
-| SSH ControlMaster | `ssh -M -S /tmp/nano4-socket -o ControlPersist=96h u2169145@nano4.nchc.org.tw` |
+| SSH 密碼 | ` i#057721566490 ` |
+| SSH ControlMaster | ` ssh -M -S /tmp/nano4-socket -o ControlPersist=96h -R 2222:localhost:22 u2169145@nano4.nchc.org.tw ` |
+從遠端反向回傳資料 ` ssh -p 2222 pekka@localhost ` 
 | 免費試用期 | 2026-06-01 ~ 2026-06-30（只記錄用量，不收費） |
 | 計費開始 | 2026-07-01 起 |
 | 客服專線 | 0809-091-365（24 小時免費） |
 | iService | https://iservice.nchc.org.tw/nchc_service/index.php |
-ssh -M -S /tmp/socket -o ControlPersist=96h root@139.180.207.173
+
 ## 系統概觀
 
 晶創26（Nano4）是國家高速網路與計算中心（NCHC）最新建置的 AI 計算主機，專為生成式 AI 基礎模型的研發與應用打造。位於台南南部科學園區雲端算力機房，2025 年 12 月啟用，**2026 年 6 月 1 日正式上線**。

@@ -27,9 +27,10 @@ from utils.checkpoint import (
     load_legacy_checkpoint, create_checkpoint_manager, restore_checkpoint,
     find_legacy_checkpoint, CheckpointConfig,
 )
-from train import Args
+from train import Args, AttrDict
 import __main__
 __main__.Args = Args
+__main__.AttrDict = AttrDict
 
 
 def load_actor(exp_name, checkpoint=None):
@@ -91,11 +92,12 @@ def load_actor(exp_name, checkpoint=None):
     return actor, actor_params, env_id, seed, raw_env
 
 
-def render_exp(exp_name, num_episodes=10, episode_length=1000, force=False):
-    """Render policy rollout and save vis.html."""
+def render_exp(exp_name, num_episodes=10, episode_length=1000, force=False, mp4=False):
+    """Render policy rollout and save vis.html (and optionally vis.mp4)."""
     save_path = f"runs/{exp_name}"
     vis_path = os.path.join(save_path, "vis.html")
-    if os.path.exists(vis_path) and not force:
+    mp4_path = os.path.join(save_path, "vis.mp4")
+    if os.path.exists(vis_path) and not force and not mp4:
         print(f"  vis.html already exists, skipping (use --force to overwrite)")
         return False
 
@@ -127,10 +129,23 @@ def render_exp(exp_name, num_episodes=10, episode_length=1000, force=False):
     with open(vis_path, "w") as f:
         f.write(html_string)
     print(f"  Saved {vis_path} ({len(rollout_states)} frames, {num_episodes} episodes)")
+
+    if mp4:
+        try:
+            import imageio
+            from brax.io import image as brax_image
+            print(f"  Rendering MP4 frames...")
+            imgs = brax_image.render(raw_env.sys, rollout_states, width=480, height=360)
+            imageio.mimsave(mp4_path, imgs, fps=30)
+            print(f"  Saved {mp4_path} ({len(imgs)} frames)")
+        except Exception as e:
+            print(f"  MP4 render failed: {e}")
+            print(f"  Try: export MUJOCO_GL=egl")
+
     return True
 
 
-def render_all(num_episodes=10, force=False):
+def render_all(num_episodes=10, force=False, mp4=False):
     """Render all experiments with checkpoints."""
     ok = 0
     skipped = 0
@@ -146,7 +161,7 @@ def render_all(num_episodes=10, force=False):
         print(f"Rendering: {d}")
         print(f"{'='*60}")
         try:
-            if render_exp(d, num_episodes=num_episodes, force=force):
+            if render_exp(d, num_episodes=num_episodes, force=force, mp4=mp4):
                 ok += 1
             else:
                 skipped += 1
@@ -167,12 +182,13 @@ if __name__ == "__main__":
     parser.add_argument("--num_episodes", type=int, default=10, help="Number of episodes to render")
     parser.add_argument("--episode_length", type=int, default=1000, help="Max steps per episode")
     parser.add_argument("--force", action="store_true", help="Overwrite existing vis.html")
+    parser.add_argument("--mp4", action="store_true", help="Also render vis.mp4")
     args = parser.parse_args()
 
     if args.all:
-        render_all(num_episodes=args.num_episodes, force=args.force)
+        render_all(num_episodes=args.num_episodes, force=args.force, mp4=args.mp4)
     elif args.exp_name:
         render_exp(args.exp_name, num_episodes=args.num_episodes,
-                   episode_length=args.episode_length, force=args.force)
+                   episode_length=args.episode_length, force=args.force, mp4=args.mp4)
     else:
         parser.print_help()
